@@ -184,12 +184,14 @@
 
   // ---------- рендер ----------
   function render() {
+    document.body.classList.toggle('ingame', !!S && S.phase !== 'lobby');
     if (!S) return renderHome();
     if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dLayout = null; dSel = null; mSel = null; return renderLobby(); }
     renderGame();
   }
 
   function renderHome() {
+    document.body.classList.remove('ingame');
     const code = urlCode();
     app.innerHTML = `
       <div class="hero card-box">
@@ -269,7 +271,7 @@
   // ---------- карты ----------
   const SYM = { skip: '⊘', rev: '⇄', '+2': '+2', wild: '', '+4': '+4' };
   const cardHtml = (c, cls = '', attrs = '') => {
-    const v = SYM[c.value] || c.value;
+    const v = c.value in SYM ? SYM[c.value] : c.value;
     return `<div class="card ${c.color} ${c.value === '+4' ? 'four' : ''} ${cls}" ${attrs}><span class="corner tl">${v}</span><span class="v">${v}</span><span class="corner br">${v}</span></div>`;
   };
   const backHtml = (cls = '') => `<div class="card back ${cls}"><span class="v">UNO</span></div>`;
