@@ -10,10 +10,10 @@ const ctx = { host: 'p0' };
 
 // нейтральный стол: верх — красная 5, ходит p0, нет штрафов
 function fresh(n = 3, rules = {}) {
-  const st = uno.create(P(n), { stack: 'off', wild4: 'free', drawMode: 'one', ...rules });
+  const st = uno.create(P(n), { stack: 'off', drawMode: 'one', ...rules });
   st.discard = [card(900, 'r', '5')];
   st.color = 'r';
-  st.turn = 0; st.dir = 1; st.pending = 0; st.pendingType = null; st.drawn = null; st.challenge = null;
+  st.turn = 0; st.dir = 1; st.pending = 0; st.pendingType = null; st.drawn = null;
   return st;
 }
 
@@ -88,53 +88,23 @@ test('при штрафе нельзя ходить обычной картой'
   assert.deepStrictEqual(uno.view(st, 'p1').playable, []);
 });
 
-test('«+4»: строгий режим запрещает при нужном цвете', () => {
-  const st = fresh(3, { wild4: 'strict' });
+test('«+4» можно играть всегда, даже при карте нужного цвета', () => {
+  const st = fresh(3);
   st.hands.p0 = [card(1, 'w', '+4'), card(2, 'r', '1')];
-  assert.ok(uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' }).error);
-  assert.deepStrictEqual(uno.view(st, 'p0').playable, [2]);
-  st.hands.p0 = [card(1, 'w', '+4'), card(3, 'b', '1')];
+  assert.deepStrictEqual(uno.view(st, 'p0').playable.sort(), [1, 2]);
   assert.ok(uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' }).ok);
-});
-
-test('оспаривание «+4»: нечестно сыграли — штраф получает игравший', () => {
-  const st = fresh(3, { wild4: 'challenge' });
-  st.hands.p0 = [card(1, 'w', '+4'), card(2, 'r', '1'), card(7, 'g', '3')]; // красная есть — играть нельзя
-  uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' });
-  assert.deepStrictEqual(uno.view(st, 'p1').challenge, { by: 'p0', target: 'p1' });
-  const mine = st.hands.p1.length;
-  assert.ok(uno.act(st, 'p2', { type: 'challenge' }).error); // оспаривает только следующий
-  assert.ok(uno.act(st, 'p1', { type: 'challenge' }).ok);
-  assert.strictEqual(st.hands.p0.length, 2 + 4); // p0 берёт 4
-  assert.strictEqual(st.hands.p1.length, mine); // p1 ничего не берёт
-  assert.strictEqual(cur(st), 'p1'); // и ходит сам
-  assert.strictEqual(st.pending, 0);
-});
-
-test('оспаривание «+4»: сыграли честно — оспоривший берёт 6', () => {
-  const st = fresh(3, { wild4: 'challenge' });
-  st.hands.p0 = [card(1, 'w', '+4'), card(2, 'b', '1')]; // красных нет — всё честно
-  uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' });
-  const mine = st.hands.p1.length;
-  uno.act(st, 'p1', { type: 'challenge' });
-  assert.strictEqual(st.hands.p1.length, mine + 6);
+  assert.strictEqual(st.pending, 4);
+  assert.strictEqual(st.color, 'g');
+  const before = st.hands.p1.length;
+  uno.act(st, 'p1', { type: 'draw' });
+  assert.strictEqual(st.hands.p1.length, before + 4);
   assert.strictEqual(cur(st), 'p2');
 });
 
-test('«+4»: принять — обычный штраф 4; оспорить стопку нельзя', () => {
-  const st = fresh(3, { wild4: 'challenge', stack: 'all' });
-  st.hands.p0 = [card(1, 'w', '+4'), card(2, 'b', '1')];
-  st.hands.p1 = [card(3, 'w', '+4'), card(4, 'b', '2')];
-  uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' });
-  uno.act(st, 'p1', { type: 'play', cardId: 3, color: 'y' }); // ответил плюсом — это принятие
-  assert.strictEqual(st.challenge, null);
-  assert.strictEqual(st.pending, 8);
-  const st2 = fresh(3, { wild4: 'challenge' });
-  st2.hands.p0 = [card(1, 'w', '+4'), card(2, 'b', '1')];
-  uno.act(st2, 'p0', { type: 'play', cardId: 1, color: 'g' });
-  const before = st2.hands.p1.length;
-  uno.act(st2, 'p1', { type: 'draw' });
-  assert.strictEqual(st2.hands.p1.length, before + 4);
+test('таймер хода фиксирован: 60 секунд, в настройках его нет', () => {
+  assert.strictEqual(uno.meta.defaultRules.turnTimer, 60);
+  assert.ok(!uno.meta.rulesSchema.some((r) => r.key === 'turnTimer'));
+  assert.ok(!uno.meta.rulesSchema.some((r) => r.key === 'wild4'));
 });
 
 test('дикая карта требует цвет', () => {
@@ -262,9 +232,9 @@ test('автоход по таймеру: взять карту, затем па
 
 test('случайные партии доигрываются до конца при любых правилах', () => {
   const variants = [
-    { stack: 'all', wild4: 'challenge', drawMode: 'until' },
-    { stack: 'same', wild4: 'strict', drawMode: 'one' },
-    { stack: 'off', wild4: 'free', drawMode: 'one' },
+    { stack: 'all', drawMode: 'until' },
+    { stack: 'same', drawMode: 'one' },
+    { stack: 'off', drawMode: 'one' },
   ];
   for (const rules of variants) {
     for (let g = 0; g < 15; g++) {
@@ -273,8 +243,6 @@ test('случайные партии доигрываются до конца �
       let guard = 0;
       while (!st.over && guard++ < 6000) {
         const pid = cur(st);
-        // ответ на «+4»: иногда оспаривают
-        if (st.challenge && st.challenge.target === pid && Math.random() < 0.5) { assert.ok(!uno.act(st, pid, { type: 'challenge' }).error); continue; }
         const v = uno.view(st, pid);
         let a;
         if (v.playable.length) {

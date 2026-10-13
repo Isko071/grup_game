@@ -1,6 +1,6 @@
 'use strict';
 // Логика УНО по мотивам мобильной версии. Состояние изменяется на месте; игрокам уходит только view().
-//  - плюсы суммируются (настраивается), «+4» можно оспорить;
+//  - плюсы суммируются (настраивается), «+4» можно играть всегда (у неё четыре цвета);
 //  - если нечем ходить: берёшь одну карту или берёшь, пока не выпадет подходящая;
 //  - кнопка «УНО!» общая: ею и защищаешь себя, и ловишь забывшего;
 //  - выигравший выходит, остальные играют дальше, пока не выиграет половина игроков (или хост закончит игру).
@@ -13,7 +13,7 @@ const meta = {
   minPlayers: 2,
   maxPlayers: 10,
   supportsBots: false,
-  defaultRules: { stack: 'all', wild4: 'challenge', drawMode: 'one', turnTimer: 30 },
+  defaultRules: { stack: 'all', drawMode: 'one', turnTimer: 60 }, // таймер 60 с фиксирован, в настройках его нет
   rulesSchema: [
     {
       key: 'stack', label: 'Плюсы (+2 и +4) суммируются', type: 'select',
@@ -24,21 +24,12 @@ const meta = {
       ],
     },
     {
-      key: 'wild4', label: 'Карта «+4»', type: 'select',
-      choices: [
-        { value: 'challenge', label: 'Можно оспорить' },
-        { value: 'strict', label: 'Только без нужного цвета' },
-        { value: 'free', label: 'Без ограничений' },
-      ],
-    },
-    {
       key: 'drawMode', label: 'Если нечем ходить', type: 'select',
       choices: [
         { value: 'one', label: 'Берёт одну карту' },
         { value: 'until', label: 'Берёт, пока не выпадет подходящая' },
       ],
     },
-    { key: 'turnTimer', label: 'Таймер хода', type: 'select', options: [0, 15, 30, 45, 60, 90], unit: 'с', zero: 'без таймера' },
   ],
 };
 
@@ -79,7 +70,6 @@ function create(players, rules = {}, rnd = Math.random) {
     drawn: null, // id карты, взятой в этот ход (можно сыграть или пропустить)
     called: {}, // id -> нажал «УНО»
     catchable: null, // id игрока, которого можно поймать
-    challenge: null, // {by, target, legal}: ждём, оспорит ли target чужую «+4»
     out: {}, // id -> 'finished' | 'left'
     finished: [], // порядок финиша
     places: null, // итоговая таблица мест
@@ -119,13 +109,12 @@ function advance(st, from, n = 1) {
   return i;
 }
 
-function isPlayable(st, card, hand) {
+function isPlayable(st, card) {
   if (st.pending > 0) {
     if (st.rules.stack === 'off') return false;
     if (st.rules.stack === 'same') return card.value === st.pendingType;
     return card.value === '+2' || card.value === '+4';
   }
-  if (card.value === '+4' && st.rules.wild4 === 'strict' && hand && hand.some((c) => c.color === st.color)) return false;
   if (card.color === 'w') return true;
   return card.color === st.color || card.value === topCard(st).value;
 }
@@ -191,26 +180,8 @@ function act(st, pid, a, ctx) {
 
   if (currentId(st) !== pid) return { error: 'Сейчас не ваш ход' };
 
-  if (a.type === 'challenge') {
-    const ch = st.challenge;
-    if (!ch || ch.target !== pid) return { error: 'Нечего оспаривать' };
-    const n = st.pending;
-    st.pending = 0; st.pendingType = null; st.challenge = null;
-    if (!ch.legal) {
-      giveCards(st, ch.by, n);
-      say(st, `${nm(st, pid)} оспорил «+4»: у ${nm(st, ch.by)} был нужный цвет — он берёт ${n} ${cardWord(n)}`);
-      return { ok: true, sound: 'penalty' };
-    }
-    const m = n + 2;
-    giveCards(st, pid, m);
-    say(st, `${nm(st, pid)} оспорил зря и берёт ${m} ${cardWord(m)}`);
-    endTurn(st, 0);
-    return { ok: true, sound: 'draw' };
-  }
-
   if (a.type === 'draw') {
     if (st.drawn !== null) return { error: 'Вы уже взяли карту' };
-    st.challenge = null; // взять карты = принять «+4»
     if (st.pending > 0) {
       const n = st.pending;
       giveCards(st, pid, n);
@@ -225,9 +196,9 @@ function act(st, pid, a, ctx) {
       [c] = takeFromDraw(st, 1);
       if (!c) break;
       hand.push(c); got++;
-    } while (st.rules.drawMode === 'until' && !isPlayable(st, c, hand));
+    } while (st.rules.drawMode === 'until' && !isPlayable(st, c));
     st.called[pid] = false;
-    if (c && isPlayable(st, c, hand)) {
+    if (c && isPlayable(st, c)) {
       st.drawn = c.id;
       say(st, `${nm(st, pid)} берёт ${got} ${cardWord(got)}`);
     } else {
@@ -249,18 +220,14 @@ function act(st, pid, a, ctx) {
     if (idx < 0) return { error: 'Нет такой карты' };
     const card = hand[idx];
     if (st.drawn !== null && st.drawn !== card.id) return { error: 'Можно сыграть только взятую карту' };
-    if (!isPlayable(st, card, hand)) return { error: card.value === '+4' ? '«+4» можно, только если нет карты нужного цвета' : 'Эту карту нельзя сыграть' };
+    if (!isPlayable(st, card)) return { error: 'Эту карту нельзя сыграть' };
     if (card.color === 'w' && !COLORS.includes(a.color)) return { error: 'Выберите цвет' };
 
-    const prevColor = st.color;
-    const wasPending = st.pending;
-    const hadColor = card.value === '+4' && hand.some((c) => c.id !== card.id && c.color === prevColor);
     hand.splice(idx, 1);
     st.discard.push(card);
     st.color = card.color === 'w' ? a.color : card.color;
     st.drawn = null;
     st.catchable = null;
-    st.challenge = null; // сыграть плюс-карту в ответ = принять предыдущую «+4»
 
     let sound = 'play';
     if (hand.length === 0) {
@@ -287,9 +254,6 @@ function act(st, pid, a, ctx) {
     else say(st, `${nm(st, pid)} ходит`);
 
     endTurn(st, skip);
-    if (card.value === '+4' && wasPending === 0 && st.rules.wild4 === 'challenge' && hand.length > 0) {
-      st.challenge = { by: pid, target: currentId(st), legal: !hadColor };
-    }
     return { ok: true, sound };
   }
 
@@ -318,7 +282,6 @@ function removePlayer(st, pid) {
   st.draw.unshift(...st.hands[pid]);
   st.hands[pid] = [];
   if (st.catchable === pid) st.catchable = null;
-  if (st.challenge && st.challenge.target === pid) st.challenge = null;
   say(st, `${nm(st, pid)} вышел из партии`);
   if (activeIds(st).length < 2) return finalize(st);
   if (wasCurrent) endTurn(st, 0);
@@ -337,7 +300,7 @@ function view(st, pid, ctx) {
     finished: st.finished,
     places: st.places,
     hand: me,
-    playable: mine ? me.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c, me)).map((c) => c.id) : [],
+    playable: mine ? me.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c)).map((c) => c.id) : [],
     top: topCard(st),
     recent: st.discard.slice(-4),
     color: st.color,
@@ -348,7 +311,6 @@ function view(st, pid, ctx) {
     drawn: mine ? st.drawn : null,
     canPass: mine && st.drawn !== null,
     drawLeft: st.draw.length,
-    challenge: st.challenge ? { by: st.challenge.by, target: st.challenge.target } : null,
     canFinish: !!ctx && ctx.host === pid && st.finished.length >= 1 && !st.over,
     over: st.over,
     winner: st.finished[0] || null,
@@ -357,7 +319,7 @@ function view(st, pid, ctx) {
   };
 }
 
-// Автоход по таймеру: принять «+4»/взять карту, а если уже взял — пас.
+// Автоход по таймеру: взять карту (или принять штраф), а если уже взял — пас.
 function timeoutMove(st, pid) {
   if (st.over || st.out[pid] || currentId(st) !== pid) return null;
   return st.drawn !== null ? { type: 'pass' } : { type: 'draw' };
@@ -366,7 +328,7 @@ function timeoutMove(st, pid) {
 module.exports = {
   meta, create, act, view, timeoutMove, removePlayer,
   currentPlayer: currentId,
-  turnKey: (st) => `${currentId(st)}:${st.drawn !== null}:${st.challenge ? 1 : 0}`,
+  turnKey: (st) => `${currentId(st)}:${st.drawn !== null}`,
   isOver: (st) => st.over,
   _internal: { buildDeck, isPlayable, currentId },
 };

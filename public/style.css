@@ -398,9 +398,6 @@ button,.card,.pcard,.pcell,.pair{touch-action:manipulation;-webkit-user-select:n
 .upend{position:absolute;right:-30px;top:-14px;background:#fff;color:#e8262d;font-weight:900;font-size:18px;border-radius:99px;padding:1px 10px;box-shadow:0 2px 8px rgba(0,0,0,.5);z-index:3;animation:bubble .25s ease-out}
 .ustatus{position:absolute;left:0;right:0;top:calc(46% + 90px);text-align:center;font-weight:700;font-size:15px;text-shadow:0 1px 3px rgba(0,0,0,.6);z-index:2;padding:0 10px}
 .ustatus.mine{color:#fff3b0}
-.cbanner{position:absolute;left:0;right:0;top:46%;transform:translateY(-50%);background:rgba(10,10,40,.62);padding:10px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;z-index:6;font-weight:700;backdrop-filter:blur(3px)}
-.btn.red{background:linear-gradient(180deg,#ff5a4d,#c71f1f);color:#fff;border:2px solid #fff}
-.btn.blue{background:linear-gradient(180deg,#4aa3ff,#1f62c9);color:#fff;border:2px solid #fff}
 .ustrip{position:absolute;left:0;right:0;bottom:calc(var(--hh,128px) + 4px);display:flex;align-items:flex-end;justify-content:space-between;padding:0 12px;z-index:5;pointer-events:none}
 .ustrip>*{pointer-events:auto}
 .mebox{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:60px}
@@ -447,3 +444,11 @@ body.inroom .brand .bt{display:inline}
 select.sel{flex:0 1 52%;min-width:0;max-width:52%}
 .uhand{bottom:16px}
 .ustrip{bottom:calc(var(--hh,128px) + 14px)}
+
+/* плашка «Сходить / Оставить» после добора (как «Challenge / Decline» в референсе) */
+.cbanner{position:absolute;left:0;right:0;top:46%;transform:translateY(-50%);background:rgba(10,10,40,.62);padding:10px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;z-index:6;font-weight:700;backdrop-filter:blur(3px)}
+.btn.red{background:linear-gradient(180deg,#ff5a4d,#c71f1f);color:#fff;border:2px solid #fff}
+.btn.blue{background:linear-gradient(180deg,#4aa3ff,#1f62c9);color:#fff;border:2px solid #fff}
+
+.cbanner span{flex:1 0 100%;text-align:center;font-size:14px}
+.cbanner .btn{flex:1 1 0;max-width:150px;padding:10px 8px}

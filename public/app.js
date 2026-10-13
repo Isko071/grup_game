@@ -611,16 +611,13 @@
     const myIdx = g.order.indexOf(me);
     const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
     const dense = others.length > 5;
-    const ch = g.challenge;
-    const meCh = ch && ch.target === me && myTurn;
     const place = (id) => { const p = g.places ? g.places.indexOf(id) : g.finished.indexOf(id); return p >= 0 && (g.out[id] === 'finished' || g.places) ? p : -1; };
     const placeBadge = (id) => { const p = place(id); return p >= 0 && g.out[id] !== 'left' ? (MEDAL[p] ? `<span class="uplace">${MEDAL[p]}</span>` : `<span class="uplace num">${p + 1}</span>`) : (g.out[id] === 'left' ? '<span class="uplace">🚪</span>' : ''); };
 
     let status;
     if (g.over) status = 'Партия окончена';
     else if (myOut === 'finished') status = `Вы выиграли! Место ${g.finished.indexOf(me) + 1}. Смотрите дальше`;
-    else if (meCh) status = `Оспорить «+4» ${nameOf(ch.by)}?`;
-    else if (myTurn && g.drawn !== null) status = 'Сыграйте взятую карту или пасуйте';
+    else if (myTurn && g.drawn !== null) status = 'Сходить или оставить?';
     else if (myTurn && g.pending) status = `Положите плюс или возьмите ${g.pending}`;
     else if (myTurn) status = 'Ваш ход';
     else status = `Ходит ${nameOf(g.turn)}`;
@@ -666,14 +663,14 @@
         <div class="orbit"><span>${g.dir === 1 ? '↻' : '↺'}</span></div>
         ${others.map(seat).join('')}
         <div class="ucenter">
-          <div class="upile ${myTurn && g.drawn === null && !meCh ? 'can' : ''}" id="drawPile">
+          <div class="upile ${myTurn && g.drawn === null ? 'can' : ''}" id="drawPile">
             <div class="card back" style="--w:62px"></div><b class="pcnt">${g.drawLeft}</b>
           </div>
           <div class="udisc c-${g.color}" id="discard">${recent}<div class="utop">${cardHtml(g.top, 'top', `data-cid="${g.top.id}" style="--w:76px"`)}</div></div>
           ${g.pending ? `<div class="upend">+${g.pending}</div>` : ''}
         </div>
-        ${ch ? `<div class="cbanner"><span>${meCh ? `«+4» от ${esc(nameOf(ch.by))}` : `${esc(nameOf(ch.target))} решает: оспорить «+4»?`}</span>
-          ${meCh ? `<button class="btn red" id="uChal">Оспорить</button><button class="btn blue" id="uAcc">Принять +${g.pending}</button>` : ''}</div>` : ''}
+        ${myTurn && g.drawn !== null ? `<div class="cbanner"><span>Выпала подходящая карта</span>
+          <button class="btn red" id="uPlay">Сходить</button><button class="btn blue" id="uPass">Оставить</button></div>` : ''}
         <div class="ustatus ${myTurn ? 'mine' : ''}">${esc(status)}<span id="uTimerTxt"></span></div>
         <div class="ustrip">
           <div class="mebox ${myTurn ? 'turn' : ''} ${myOut ? 'out' : ''}" data-seat="${me}">
@@ -681,7 +678,6 @@
             <div class="uname">${esc(myName)}</div>
           </div>
           <div class="uactions">
-            ${g.canPass ? '<button class="btn ghost small" id="uPass">Пас</button>' : ''}
             ${g.canFinish ? '<button class="btn ghost small" id="uFinish">Закончить игру</button>' : ''}
           </div>
           ${!g.over && !myOut ? '<button class="unobtn" id="uUno" aria-label="УНО"><span>UNO!</span></button>' : '<span></span>'}
@@ -709,11 +705,15 @@
       };
     });
     const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-    bind('#drawPile', () => { if (myTurn && g.drawn === null && !meCh) act({ type: 'draw' }); else if (meCh) act({ type: 'draw' }); });
+    bind('#drawPile', () => { if (myTurn && g.drawn === null) act({ type: 'draw' }); });
     bind('#uUno', () => act({ type: 'uno' }));
     bind('#uPass', () => act({ type: 'pass' }));
-    bind('#uChal', () => act({ type: 'challenge' }));
-    bind('#uAcc', () => act({ type: 'draw' }));
+    bind('#uPlay', () => {
+      const card = g.hand.find((c) => c.id === g.drawn);
+      if (!card) return;
+      if (card.color === 'w') pickColor((color) => act({ type: 'play', cardId: card.id, color }));
+      else act({ type: 'play', cardId: card.id });
+    });
     bind('#uFinish', async () => { if (await confirmBox({ title: 'Закончить игру?', text: 'Партия завершится сейчас, места распределятся по текущему положению.', ok: 'Закончить', cancel: 'Продолжить' })) act({ type: 'finish' }); });
     bind('#again', () => emit('room:lobby'));
   }
