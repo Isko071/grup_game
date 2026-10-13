@@ -63,6 +63,7 @@ function create(players, rules = {}, rnd = Math.random) {
     firstBout: true,
     over: false,
     loser: null,
+    bubbles: {}, // id -> короткая реплика над аватаром («Пас», «Беру»)
     log: [],
     rnd,
   };
@@ -153,6 +154,7 @@ function act(st, pid, a) {
     hand.splice(idx, 1);
     st.table.push({ a: card, d: null });
     st.passed = {};
+    st.bubbles = {};
     say(st, `${nm(st, pid)} ${st.table.length === 1 ? 'ходит' : 'подкидывает'}`);
     return after(st, 'play');
   }
@@ -167,6 +169,7 @@ function act(st, pid, a) {
     if (!beats(st, pair.a, hand[idx])) return { error: 'Эта карта не бьёт' };
     pair.d = hand.splice(idx, 1)[0];
     st.passed = {};
+    st.bubbles = {};
     return after(st, 'play');
   }
 
@@ -180,6 +183,7 @@ function act(st, pid, a) {
     st.defender = next;
     st.roundDefHand = st.hands[next].length;
     st.passed = {};
+    st.bubbles = { [pid]: 'Перевод' };
     say(st, `${nm(st, pid)} переводит на ${nm(st, next)}`);
     return after(st, 'play');
   }
@@ -190,6 +194,7 @@ function act(st, pid, a) {
     if (undefended(st).length === 0) return { error: 'Нечего брать' };
     st.taking = true;
     st.passed = {};
+    st.bubbles = { [pid]: 'Беру' };
     say(st, `${nm(st, pid)} берёт`);
     return after(st, 'draw');
   }
@@ -199,6 +204,7 @@ function act(st, pid, a) {
     if (!throwerIds(st).includes(pid)) return { error: 'Вы не подкидываете' };
     if (!(st.taking || allCovered(st))) return { error: 'Защитник ещё отбивается' };
     st.passed[pid] = true;
+    st.bubbles[pid] = 'Пас';
     return after(st, null);
   }
 
@@ -224,6 +230,7 @@ function endRound(st) {
   st.table = [];
   st.taking = false;
   st.passed = {};
+  st.bubbles = {};
   st.firstBout = false;
 
   // добор: сначала атакующий, затем по кругу, защитник последним
@@ -289,6 +296,7 @@ function view(st, pid) {
     canTransfer,
     canTake: isDef && !st.taking && und.length > 0 && !st.over,
     canPass: !st.over && throwers.includes(pid) && st.table.length > 0 && (st.taking || allCovered(st)) && !st.passed[pid],
+    bubbles: st.bubbles,
     over: st.over,
     loser: st.loser,
     log: st.log.slice(-6),

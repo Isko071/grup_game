@@ -97,9 +97,10 @@ class Room {
     if (!g) return 'Игра недоступна';
     if (this.players.length < g.meta.minPlayers) return `Нужно минимум ${g.meta.minPlayers} игрока`;
     if (this.players.length > g.meta.maxPlayers) return `Максимум ${g.meta.maxPlayers} игроков`;
+    if (!g.meta.supportsBots && this.players.some((p) => p.bot)) return 'В этой игре нет ботов — уберите их из комнаты';
     const bad = g.validate && g.validate(this.players, { ...g.meta.defaultRules, ...this.rules });
     if (bad) return bad;
-    this.game = g.create(this.players, this.rules);
+    this.game = g.create(this.players, this.rules, undefined, { hostId: this.hostId });
     this.game.names = Object.fromEntries(this.players.map((p) => [p.id, p.name]));
     this.phase = 'playing';
     this.turnKey = null;
@@ -110,7 +111,7 @@ class Room {
   act(pid, action) {
     if (this.phase !== 'playing') return { error: 'Игра не идёт' };
     const g = registry.games[this.gameId];
-    const res = g.act(this.game, pid, action);
+    const res = g.act(this.game, pid, action, { host: this.hostId });
     if (res.error) return res;
     this.afterMove();
     return res;
@@ -174,6 +175,27 @@ class Room {
     this.botTimer.unref?.();
   }
 
+  // Игрок вышел посреди игры: игры без ботов убирают его из партии, остальные отдают его место боту
+  leaveInGame(id) {
+    const p = this.byId(id);
+    if (!p || p.bot) return;
+    const g = registry.games[this.gameId];
+    if (g.removePlayer && this.game) {
+      g.removePlayer(this.game, id);
+      p.left = true; p.token = null;
+      this.markDisconnected(id);
+      this.afterMove();
+    } else if (g.meta.supportsBots) {
+      p.bot = true; p.token = null; p.connected = true; p.socketId = null;
+      p.name = `${p.name} 🤖`;
+      if (this.hostId === id) this.reassignHost();
+      if (this.connectedHumans.length === 0) this.startEmptyTimer();
+      this.afterMove();
+    } else {
+      this.markDisconnected(id);
+    }
+  }
+
   backToLobby() {
     clearTimeout(this.botTimer);
     this.clearTurnTimer();
@@ -195,9 +217,10 @@ class Room {
       rules: { ...g.meta.defaultRules, ...this.rules },
       games: registry.list(),
       soon: registry.soon,
-      players: this.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, connected: p.connected })),
-      chat: this.chat.slice(-40),
-      game: this.game && this.phase !== 'lobby' ? g.view(this.game, pid) : null,
+      players: this.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, connected: p.connected, left: !!p.left })),
+      chat: this.chat.filter((m) => !m.to || m.to.includes(pid)).slice(-40),
+      chatChannel: (this.chatPolicyFor(pid) || {}).channel || null,
+      game: this.game && this.phase !== 'lobby' ? g.view(this.game, pid, { host: this.hostId }) : null,
       timeLeft: this.deadline ? Math.max(0, this.deadline - Date.now()) : null,
       timerTotal: this.deadline ? Number(this.rules.turnTimer ?? g.meta.defaultRules.turnTimer) * 1000 : null,
       reactions: REACTIONS,
@@ -211,8 +234,16 @@ class Room {
     }
   }
 
-  pushChat(from, text) {
+  // Куда сейчас может писать игрок: null — нельзя; {channel, to?}
+  chatPolicyFor(pid) {
+    const g = registry.games[this.gameId];
+    if (this.phase === 'lobby' || !this.game || !g.chatPolicy) return { channel: 'all' };
+    return g.chatPolicy(this.game, pid, { host: this.hostId });
+  }
+
+  pushChat(from, text, to, ch) {
     const m = { t: Date.now(), from, text: String(text).slice(0, 300) };
+    if (to) { m.to = to; m.ch = ch; }
     this.chat.push(m);
     if (this.chat.length > MAX_CHAT) this.chat.shift();
     return m;

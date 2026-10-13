@@ -82,14 +82,21 @@ io.on('connection', (socket) => {
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     if (p.gameId) {
       if (!registry.games[p.gameId]) return ack({ error: 'Игра недоступна' });
-      if (p.gameId !== room.gameId) { room.gameId = p.gameId; room.rules = {}; }
+      if (p.gameId !== room.gameId) {
+        room.gameId = p.gameId; room.rules = {};
+        // в играх без ботов боты из комнаты убираются
+        if (!registry.games[p.gameId].meta.supportsBots) room.players = room.players.filter((x) => !x.bot);
+      }
     }
     if (p.rules && typeof p.rules === 'object') {
       const schema = registry.games[room.gameId].meta.rulesSchema;
       for (const s of schema) {
         if (!(s.key in p.rules)) continue;
         if (s.type === 'bool') room.rules[s.key] = !!p.rules[s.key];
-        else if (s.type === 'select' && s.options.includes(Number(p.rules[s.key]))) room.rules[s.key] = Number(p.rules[s.key]);
+        else if (s.type === 'select' && s.choices) {
+          const c = s.choices.find((x) => String(x.value) === String(p.rules[s.key]));
+          if (c) room.rules[s.key] = c.value;
+        } else if (s.type === 'select' && s.options.includes(Number(p.rules[s.key]))) room.rules[s.key] = Number(p.rules[s.key]);
       }
     }
     ack({ ok: true });
@@ -144,7 +151,9 @@ io.on('connection', (socket) => {
   socket.on('chat:send', guard((p, ack) => {
     const text = String(p.text || '').trim();
     if (!text) return ack({ error: 'Пусто' });
-    room.pushChat(me.name, text);
+    const pol = room.chatPolicyFor(me.id);
+    if (!pol) return ack({ error: 'Сейчас писать нельзя' });
+    room.pushChat(me.name, text, pol.to, pol.channel);
     ack({ ok: true });
     room.broadcast();
   }));
@@ -156,12 +165,13 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:leave', guard((_p, ack) => {
-    const r = room, id = me.id;
+    const r = room, id = me.id, name = me.name;
     socket.leave(r.code);
     room = null; me = null;
     if (r.phase === 'lobby') r.removePlayer(id);
+    else if (r.phase === 'playing') r.leaveInGame(id);
     else r.markDisconnected(id);
-    r.pushChat(null, 'Игрок вышел');
+    r.pushChat(null, `${name} вышел`);
     r.touch();
     r.broadcast();
     ack({ ok: true });
