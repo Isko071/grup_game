@@ -30,6 +30,21 @@ io.on('connection', (socket) => {
     socket.join(r.code);
   };
 
+  // Возврат после обрыва связи: клиент передаёт код комнаты и токен прямо при подключении,
+  // поэтому сокет привязан к игроку ещё до первого действия (иначе нажатие в этот момент давало «Вы не в комнате»)
+  const auth = socket.handshake.auth || {};
+  if (auth.code && auth.token) {
+    const r = rooms.get(auth.code);
+    const known = r && r.byToken(auth.token);
+    if (known) {
+      if (known.socketId && known.socketId !== socket.id) io.to(known.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства' });
+      const longOff = known.offAt && Date.now() - known.offAt > 20000;
+      attach(r, known);
+      if (longOff) r.pushChat(null, `${known.name} вернулся`);
+      r.broadcast();
+    }
+  }
+
   const guard = (fn) => (payload, ack) => {
     ack = typeof ack === 'function' ? ack : () => {};
     try {
@@ -62,8 +77,9 @@ io.on('connection', (socket) => {
     const known = r.byToken(p.token);
     if (known) {
       if (known.socketId && known.socketId !== socket.id) io.to(known.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства' });
+      const longOff = known.offAt && Date.now() - known.offAt > 20000;
       attach(r, known);
-      r.pushChat(null, `${known.name} вернулся`);
+      if (longOff) r.pushChat(null, `${known.name} вернулся`);
       ack({ ok: true, code: r.code, token: known.token });
       return r.broadcast();
     }
@@ -78,7 +94,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:settings', guard((p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     if (p.gameId) {
       if (!registry.games[p.gameId]) return ack({ error: 'Игра недоступна' });
@@ -104,7 +120,7 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:addBot', guard((_p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     const g = registry.games[room.gameId];
     if (!g.meta.supportsBots) return ack({ error: 'В этой игре нет ботов' });
@@ -115,18 +131,18 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:kick', guard((p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     const t = room.byId(p.id);
     if (!t || t.id === me.id) return ack({ error: 'Нельзя' });
-    if (t.socketId) io.to(t.socketId).emit('kicked', { reason: 'Хост убрал вас из комнаты' });
+    if (t.socketId) io.to(t.socketId).emit('kicked', { reason: 'Создатель убрал вас из комнаты' });
     room.removePlayer(t.id);
     ack({ ok: true });
     room.broadcast();
   }));
 
   socket.on('room:start', guard((_p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Уже идёт' });
     const err = room.start();
     if (err) return ack({ error: err });
@@ -135,7 +151,7 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:lobby', guard((_p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     room.backToLobby();
     ack({ ok: true });
     room.broadcast();

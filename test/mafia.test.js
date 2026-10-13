@@ -75,7 +75,7 @@ test('голосование: побеждает большинство, при 
   assert.ok(Object.values(tie.alive).every(Boolean));
 });
 
-test('завершать фазы может только хост', () => {
+test('завершать фазы может только создатель', () => {
   const st = game(['mafia', 'doctor', 'commissar', 'civil', 'civil']);
   assert.ok(mafia.act(st, 'p3', { type: 'endNight' }, ctx).error);
   assert.ok(mafia.act(st, 'p0', { type: 'endNight' }, ctx).ok);

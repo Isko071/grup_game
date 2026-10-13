@@ -64,6 +64,7 @@ function create(players, rules = {}, rnd = Math.random) {
     over: false,
     loser: null,
     bubbles: {}, // id -> короткая реплика над аватаром («Пас», «Беру»)
+    lastEnd: null, // снимок стола перед закрытием раунда: чтобы клиент успел показать последнюю карту
     log: [],
     rnd,
   };
@@ -223,6 +224,17 @@ function endRound(st) {
   const def = st.defender;
   const att = st.attacker;
   const took = st.taking;
+  const snapshot = {
+    n: (st.lastEnd ? st.lastEnd.n : 0) + 1,
+    table: st.table.map((p) => ({ a: p.a, d: p.d })),
+    took,
+    attacker: att,
+    defender: def,
+    counts: Object.fromEntries(st.order.map((id) => [id, st.hands[id].length])),
+    hands: Object.fromEntries(st.order.map((id) => [id, [...st.hands[id]]])),
+    deckLeft: st.deck.length,
+    discard: st.discard,
+  };
   const cards = st.table.flatMap((p) => (p.d ? [p.a, p.d] : [p.a]));
   let sound = null;
   if (took) { st.hands[def].push(...cards); sound = 'draw'; say(st, `${nm(st, def)} забрал карты`); }
@@ -248,6 +260,7 @@ function endRound(st) {
       if (!isOut(st, p) && st.hands[p].length === 0) { st.out.push(p); say(st, `${nm(st, p)} вышел из игры`); }
     }
   }
+  st.lastEnd = snapshot;
   const active = st.order.filter((p) => !isOut(st, p));
   if (active.length <= 1) {
     st.over = true;
@@ -297,6 +310,7 @@ function view(st, pid) {
     canTake: isDef && !st.taking && und.length > 0 && !st.over,
     canPass: !st.over && throwers.includes(pid) && st.table.length > 0 && (st.taking || allCovered(st)) && !st.passed[pid],
     bubbles: st.bubbles,
+    lastEnd: st.lastEnd ? { n: st.lastEnd.n, table: st.lastEnd.table, took: st.lastEnd.took, attacker: st.lastEnd.attacker, defender: st.lastEnd.defender, counts: st.lastEnd.counts, hand: st.lastEnd.hands[pid] || [], deckLeft: st.lastEnd.deckLeft, discard: st.lastEnd.discard } : null,
     over: st.over,
     loser: st.loser,
     log: st.log.slice(-6),

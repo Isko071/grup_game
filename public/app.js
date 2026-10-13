@@ -1,6 +1,13 @@
 'use strict';
 (() => {
-  const socket = io();
+  // при (пере)подключении сразу отдаём серверу код комнаты и токен, чтобы он привязал сокет к игроку
+  const socket = io({
+    auth: (cb) => {
+      let sv = null;
+      try { sv = JSON.parse(localStorage.getItem('session')); } catch (e) { /* ignore */ }
+      cb(sv && sv.code && sv.token ? { code: sv.code, token: sv.token } : {});
+    },
+  });
   const $ = (s) => document.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -62,8 +69,21 @@
     const t = $('#toast'); t.textContent = msg; t.hidden = false;
     clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2600);
   }
-  function emit(ev, payload) {
-    return new Promise((res) => socket.emit(ev, payload || {}, (r) => {
+  // Возврат в комнату по токену (после обрыва связи); «Уже в комнате» тоже считается успехом
+  function rejoin() {
+    const sv = session || loadSession();
+    if (!sv || !store.get('name')) return Promise.resolve(false);
+    return new Promise((res) => socket.emit('room:join', { name: store.get('name'), code: sv.code, token: sv.token }, (r) => {
+      if (r && r.ok) { session = { code: r.code, token: r.token }; res(true); } else res(!!(r && r.error === 'Уже в комнате'));
+    }));
+  }
+
+  function emit(ev, payload, retry = true) {
+    return new Promise((res) => socket.emit(ev, payload || {}, async (r) => {
+      // сокет ещё не привязан к игроку (только что переподключились): возвращаемся и повторяем действие один раз
+      if (r && r.error === 'Вы не в комнате' && retry && (session || loadSession())) {
+        if (await rejoin()) return res(await emit(ev, payload, false));
+      }
       if (r && r.error) toast(r.error);
       res(r || {});
     }));
@@ -106,19 +126,65 @@
   }
 
   socket.on('connect', () => {
-    // автоматический реконнект по токену
+    $('#netbar').hidden = true;
+    // сервер привязывает сокет по токену сам; если комната потеряна (сервер перезапускался), возвращаемся на главную
     const sv = session || loadSession();
     const code = urlCode() || (sv && sv.code);
     if (sv && code && sv.code === code && store.get('name')) {
-      emit('room:join', { name: store.get('name'), code, token: sv.token }).then((r) => {
-        if (r.ok) session = { code: r.code, token: r.token };
-        else if (!S) { store.del('session'); renderHome(); }
-      });
+      rejoin().then((ok) => { if (!ok && !S) { store.del('session'); renderHome(); } });
     }
   });
+  socket.on('disconnect', () => { $('#netbar').hidden = false; });
   socket.on('kicked', (p) => { toast(p.reason || 'Вас убрали из комнаты'); session = null; S = null; store.del('session'); history.replaceState(null, '', '/'); $('#chat').hidden = true; $('#chatFab').hidden = true; renderHome(); });
 
+  // В дураке между изменениями на столе держим паузу в секунду: иначе ходы (особенно ботов) мелькают слишком резко
+  const DURAK_GAP = 1000;
+  let dQueue = [];
+  let dTimer = null;
+  let dLastAt = 0;
+  let seenEndN = 0;
+  function durakStep(game) { // «стол за миг до бито»: чтобы последняя карта успела показаться
+    const e = game.lastEnd;
+    return {
+      ...game, table: e.table, counts: e.counts, hand: e.hand, deckLeft: e.deckLeft, discard: e.discard,
+      attacker: e.attacker, defender: e.defender, taking: e.took, over: false, loser: null, bubbles: {},
+      canAttack: [], canDefend: {}, canTransfer: [], canTake: false, canPass: false,
+    };
+  }
+  function pumpDurak() {
+    if (dTimer || !dQueue.length) return;
+    const run = () => {
+      dTimer = null;
+      const st = dQueue.shift();
+      if (!st) return;
+      dLastAt = Date.now();
+      applyState(st);
+      if (dQueue.length) dTimer = setTimeout(run, DURAK_GAP);
+    };
+    const wait = Math.max(0, dLastAt + DURAK_GAP - Date.now());
+    if (wait === 0) run(); else dTimer = setTimeout(run, wait);
+  }
+  function flushDurak() { clearTimeout(dTimer); dTimer = null; dQueue = []; }
+
   socket.on('state', (st) => {
+    const inDurak = st.gameId === 'durak' && st.phase !== 'lobby' && st.game;
+    if (!inDurak || !S || S.gameId !== 'durak' || S.phase === 'lobby') {
+      flushDurak();
+      seenEndN = inDurak && st.game.lastEnd ? st.game.lastEnd.n : 0;
+      return applyState(st);
+    }
+    const entries = [];
+    if (st.game.lastEnd && st.game.lastEnd.n > seenEndN) {
+      seenEndN = st.game.lastEnd.n;
+      entries.push({ ...st, game: durakStep(st.game), sound: null });
+    }
+    entries.push(st);
+    dQueue.push(...entries);
+    if (dQueue.length > 6) dQueue = dQueue.slice(-4); // если накопилось, пропускаем промежуточные
+    pumpDurak();
+  });
+
+  function applyState(st) {
     const first = !S;
     const prev = S;
     S = st;
@@ -132,7 +198,7 @@
     $('#chatDot').hidden = unread === 0;
     render();
     renderChat();
-  });
+  }
 
   socket.on('reaction', (r) => {
     const el = document.createElement('div');
@@ -170,9 +236,29 @@
   };
   function setChat(open) {
     chatOpen = open; $('#chat').hidden = !open;
+    document.body.classList.toggle('chatopen', open);
     $('#chatFab').hidden = open || !S;
-    if (open) { unread = 0; $('#chatDot').hidden = true; renderChat(); setTimeout(() => $('#chatInput').focus(), 50); }
+    if (open) {
+      unread = 0; $('#chatDot').hidden = true; renderChat();
+      // на телефоне клавиатура сама не выезжает: только по нажатию на поле ввода
+      if (matchMedia('(hover: hover)').matches) setTimeout(() => $('#chatInput').focus(), 50);
+    }
   }
+
+  // Клавиатура на телефоне уменьшает видимую область, а не окно: чат подгоняем под неё,
+  // иначе поле ввода уезжает под клавиатуру, а страница «съезжает»
+  const vv = window.visualViewport;
+  function syncViewport() {
+    if (!vv) return;
+    const r = document.documentElement.style;
+    r.setProperty('--vvh', `${vv.height}px`);
+    r.setProperty('--vvt', `${vv.offsetTop}px`);
+    if (chatOpen) {
+      if (window.scrollY) window.scrollTo(0, 0);
+      const log = $('#chatLog'); log.scrollTop = log.scrollHeight;
+    }
+  }
+  if (vv) { vv.addEventListener('resize', syncViewport); vv.addEventListener('scroll', syncViewport); syncViewport(); }
   $('#chatFab').onclick = () => setChat(true);
   $('#chatClose').onclick = () => setChat(false);
   $('#roomBadge').onclick = () => {
@@ -231,7 +317,7 @@
             <li class="${p.connected ? '' : 'off'}">
               <span>${p.bot ? '🤖' : '👤'}</span>
               <span class="nm">${esc(p.name)}${p.id === S.me ? ' (вы)' : ''}</span>
-              ${p.id === S.host ? '<span class="tag">хост</span>' : ''}
+              ${p.id === S.host ? '<span class="tag">создатель</span>' : ''}
               ${!p.connected ? '<span class="tag">нет связи</span>' : ''}
               ${amHost && p.id !== S.me ? `<button class="btn ghost small" data-kick="${p.id}" title="Убрать">✕</button>` : ''}
             </li>`).join('')}</ul>
@@ -256,7 +342,7 @@
           <div style="margin-top:14px">${amHost
             ? `<button class="btn" id="start" style="width:100%" ${S.players.length < game.minPlayers ? 'disabled' : ''}>Начать игру</button>
                ${S.players.length < game.minPlayers ? `<p class="tag" style="margin-top:8px;display:inline-block">Нужно минимум ${game.minPlayers} игрока — позовите друзей или добавьте бота</p>` : ''}`
-            : '<p style="color:var(--muted);margin:0">Ждём, пока хост начнёт игру…</p>'}</div>
+            : '<p style="color:var(--muted);margin:0">Ждём, пока создатель начнёт игру…</p>'}</div>
           <button class="btn ghost small" id="leave" style="margin-top:14px">Выйти из комнаты</button>
         </section>
       </div>`;
@@ -314,7 +400,7 @@
     const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
     const sc = to.width / from.width;
     const a = g.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${dx}px,${dy}px) scale(${sc})`, opacity: 0.2 }],
-      { duration: 480, delay, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'both' });
+      { duration: 750, delay, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'both' });
     a.onfinish = () => g.remove();
   }
 
@@ -340,21 +426,21 @@
       const dx = (from.left + from.width / 2) - (nr.left + nr.width / 2);
       const dy = (from.top + from.height / 2) - (nr.top + nr.height / 2);
       el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / nr.width})`, opacity: 0.85 }],
-        { duration: 420, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
+        { duration: 650, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
     });
     if (!prev) return;
     // конец раунда: стол опустел
     if (prev.table.length && !g.table.length) {
       const bito = g.discard > prev.discard;
       const target = bito ? now.discard : (prev.defender !== S.me ? seatRect(prev.defender) : null);
-      if (target) prev.table.forEach((t, i) => flyGhost(t.html, t.rect, target, i * 45));
+      if (target) prev.table.forEach((t, i) => flyGhost(t.html, t.rect, target, i * 110));
     }
     // добор из колоды соперниками
     g.order.forEach((id) => {
       if (id === S.me) return;
       let inc = g.counts[id] - (prev.counts[id] || 0);
       if (!g.table.length && prev.table.length && !(g.discard > prev.discard) && prev.defender === id) inc -= prev.table.length;
-      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="pcard back"></div>', now.deck, seatRect(id), 250 + k * 70, 34);
+      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="pcard back"></div>', now.deck, seatRect(id), 400 + k * 110, 34);
     });
   }
 
@@ -435,7 +521,7 @@
             ${g.canTake ? '<button class="btn danger" id="dTake">Беру</button>' : ''}
             ${g.canPass ? `<button class="btn ghost" id="dPass">${g.taking ? 'Хватит' : 'Бито'}</button>` : ''}
             ${g.over && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
-            ${g.over && !amHost ? '<span class="waitmsg">Ждём хоста…</span>' : ''}
+            ${g.over && !amHost ? '<span class="waitmsg">Ждём создателя…</span>' : ''}
           </div>
         </div>
       </div>`;
@@ -516,7 +602,7 @@
           <button class="btn danger" id="mEnd">Завершить игру</button>
         </div>`;
     } else if (g.over) {
-      panel = `<div class="actions">${S.host === me ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём хоста…</span>'}</div>`;
+      panel = `<div class="actions">${S.host === me ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём создателя…</span>'}</div>`;
     } else if (live) {
       panel = `<div class="mp-text">${imAlive ? 'Играйте вживую. Ведущий отмечает выбывших.' : 'Вы выбыли. Наблюдайте молча 🤫'}</div>`;
     } else if (!imAlive) {
@@ -654,7 +740,7 @@
     const resultHtml = g.over ? `
       <div class="uresult"><h3>🏁 Итоги</h3>
         <ol>${(g.places || []).map((id, i) => `<li class="${id === me ? 'me' : ''}"><span>${MEDAL[i] || (i + 1) + '.'}</span> ${esc(nameOf(id))}${g.out[id] === 'left' ? ' <small>(вышел)</small>' : g.out[id] === 'finished' ? '' : ` <small>(карт: ${g.counts[id]})</small>`}</li>`).join('')}</ol>
-        ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём хоста…</span>'}
+        ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём создателя…</span>'}
       </div>` : '';
 
     app.innerHTML = `

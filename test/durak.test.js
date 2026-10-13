@@ -197,3 +197,22 @@ test('бот дурака: при «беру» подкидывает некоз
   st.deck = [c(900, 'h', 6), c(901, 'h', 7), c(902, 'h', 8), c(903, 'h', 9), c(904, 'h', 10)]; // колода есть — козырь бережём
   assert.deepStrictEqual(durak.botMove(st, 'p0'), { type: 'pass' });
 });
+
+test('перед закрытием раунда сохраняется снимок стола (клиент покажет последнюю карту)', () => {
+  const st = fresh(2);
+  st.hands.p0 = [c(1, 'h', 7), c(2, 'c', 9)];
+  st.hands.p1 = [c(3, 'h', 9), c(4, 'c', 10)];
+  durak.act(st, 'p0', { type: 'attack', cardId: 1 });
+  assert.strictEqual(durak.view(st, 'p1').lastEnd, null);
+  durak.act(st, 'p1', { type: 'defend', attackId: 0, cardId: 3 });
+  durak.act(st, 'p0', { type: 'pass' }); // подкидывать нечего → бито
+  const e = durak.view(st, 'p1').lastEnd;
+  assert.strictEqual(e.n, 1);
+  assert.strictEqual(e.took, false);
+  assert.strictEqual(e.table.length, 1);
+  assert.strictEqual(e.table[0].d.id, 3); // последняя отбивающая карта в снимке
+  assert.strictEqual(e.counts.p1, 1); // до добора
+  assert.strictEqual(e.hand.length, 1);
+  assert.strictEqual(st.hands.p1.length, 6); // после добора
+  assert.deepStrictEqual(durak.view(st, 'p0').lastEnd.hand.map((x) => x.id), [2]); // у каждого своя рука
+});
