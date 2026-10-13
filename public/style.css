@@ -172,7 +172,7 @@ select.sel{background:var(--bg);border:1px solid var(--border);border-radius:10p
 .pcard .big{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:calc(var(--w)*.62);opacity:.9}
 .pcard .rk.br{top:auto;left:auto;bottom:calc(var(--w)*.05);right:calc(var(--w)*.08);transform:rotate(180deg)}
 .pcard.trump{box-shadow:0 0 0 2px #ffd24a,0 3px 8px rgba(0,0,0,.4)}
-.pcard.back{background:repeating-linear-gradient(45deg,#2b3a8c 0 6px,#34459f 6px 12px);border:calc(var(--w)*.06) solid #fff}
+.pcard.back{background:repeating-linear-gradient(45deg,#6f9f5d 0 3px,#4f8043 3px 6px),#5f9150;background-blend-mode:multiply;border:calc(var(--w)*.07) solid #f4f4ee}
 .pcard.sm{--w:40px}
 .dhand .pcard{margin-left:-16px;cursor:default}
 .dhand .pcard:first-child{margin-left:0}
@@ -192,3 +192,77 @@ select.sel{background:var(--bg);border:1px solid var(--border);border-radius:10p
 .deckbox .cnt{position:absolute;left:34px;top:30px;z-index:3;font-weight:800;font-size:18px;color:#fff;text-shadow:0 1px 3px #000}
 .role{font-size:12px;margin-top:2px}
 .dside{display:flex;flex-direction:column;align-items:center;gap:6px;color:#fff;font-size:12px}
+
+/* ======== стол дурака: синее сукно, как в «Дурак онлайн» ======== */
+.table.durak{
+  --cloth:#3c6c9c;
+  background:
+    radial-gradient(ellipse at 50% 40%,rgba(255,255,255,.14),transparent 65%),
+    repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px),
+    repeating-linear-gradient(90deg,rgba(0,0,0,.05) 0 1px,transparent 1px 3px),
+    var(--cloth);
+  box-shadow:inset 0 0 70px rgba(0,0,30,.45);gap:6px;padding:10px 10px 0;overflow:hidden;position:relative}
+:root[data-theme="dark"] .table.durak{--cloth:#27496b}
+.table.durak .opps{gap:22px;align-items:flex-start;min-height:128px;padding-top:26px}
+.seat{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;color:#fff;min-width:64px;transition:opacity .3s}
+.seat.out{opacity:.5}
+.avatar{width:54px;height:54px;border-radius:8px;border:3px solid #fff;color:#fff;font-weight:900;font-size:24px;display:flex;align-items:center;justify-content:center;
+  position:relative;box-shadow:0 3px 8px rgba(0,0,0,.4);text-shadow:0 1px 2px rgba(0,0,0,.4)}
+.seat.active .avatar{border-color:#7dff72;box-shadow:0 0 0 3px rgba(125,255,114,.45),0 0 18px rgba(125,255,114,.75);animation:glow 1.3s ease-in-out infinite}
+@keyframes glow{50%{box-shadow:0 0 0 5px rgba(125,255,114,.25),0 0 26px rgba(125,255,114,.9)}}
+.rolebadge{position:absolute;right:-9px;bottom:-9px;background:#fff;border-radius:50%;width:22px;height:22px;font-size:13px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.45)}
+.sname{background:rgba(10,20,40,.72);border-radius:5px;padding:1px 8px;font-size:12px;font-weight:700;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bubble{position:absolute;top:-24px;left:50%;transform:translateX(-50%);background:#fff;color:#1b1b1b;font-weight:800;font-size:13px;border-radius:7px;padding:1px 9px;
+  box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;animation:bubble .25s ease-out;z-index:3}
+.bubble::after{content:"";position:absolute;left:50%;bottom:-5px;margin-left:-5px;border:5px solid transparent;border-bottom:0;border-top-color:#fff}
+@keyframes bubble{from{transform:translateX(-50%) translateY(6px) scale(.6);opacity:0}}
+.fan{display:flex;align-items:flex-start;position:relative;margin-top:2px;height:calc(34px*1.4*.5)}
+.fan .pcard{margin-left:-20px;box-shadow:0 1px 4px rgba(0,0,0,.45)}
+.fan .pcard:first-child{margin-left:0}
+.fcount{position:absolute;right:-18px;top:-2px;background:#fff;color:#1b1b1b;border-radius:99px;font-size:11px;font-weight:800;padding:0 6px}
+
+.dcenter{align-items:center!important;gap:6px!important;min-height:180px}
+.deckbox{width:80px;height:84px}
+.deckbox .pcard.stack{left:36px;top:6px}
+.deckbox .pcard.s2{left:38px;top:4px}.deckbox .pcard.s3{left:40px;top:2px}
+.deckbox .pcard.trumpc{left:2px;top:22px}
+.deckbox .pcard.empty{background:transparent;border:2px dashed rgba(255,255,255,.45);box-shadow:none;color:#fff}
+.deckbox .cnt{left:42px;top:24px}
+.discardbox{position:relative;width:60px;height:64px}
+.discardbox .pcard{position:absolute;left:6px;top:4px;transform:rotate(-8deg)}
+.discardbox .pcard.d2{transform:rotate(11deg);left:12px;top:8px}
+.discardbox .ghostslot{background:transparent;border:2px dashed rgba(255,255,255,.3);box-shadow:none}
+.dlabel{font-size:11px;color:rgba(255,255,255,.85)}
+.empty-table{color:rgba(255,255,255,.55);align-self:center}
+.dtable{gap:16px 14px!important}
+.pair{width:calc(70px + 24px);height:calc(70px*1.4 + 12px)}
+.pair .pcard{--w:70px}
+.pair .pcard.d{left:24px;top:12px;transform:rotate(7deg)}
+.pcard{background:linear-gradient(180deg,#fff,#f5f3ee);border-color:#d6d3cb}
+.flyghost{position:fixed;z-index:80;pointer-events:none}
+.flyghost .pcard{width:100%;height:100%}
+.pcard.sel{animation:lift .15s ease-out}
+@keyframes lift{from{transform:translateY(-6px)}}
+
+.dhandwrap{margin:0 -10px;padding:0 10px;transition:background .3s}
+.dhandwrap.active{background:linear-gradient(0deg,rgba(125,255,114,.18),transparent 70%)}
+.dhand{padding-top:30px}
+.dhand .pcard{--w:78px;margin-left:-26px;transition:transform .15s,filter .15s}
+.dhand .pcard:first-child{margin-left:0}
+.mebar{background:#fbfaf6;border-radius:18px 18px 0 0;margin:0 -10px;padding:6px 14px 10px;padding-bottom:max(10px,env(safe-area-inset-bottom));
+  display:flex;align-items:center;gap:14px;box-shadow:0 -4px 14px rgba(0,0,0,.25);min-height:76px}
+.mebar .seat{color:#1b1b1b;flex:none}
+.mebar .sname{background:rgba(10,20,40,.8);color:#fff}
+.mebar .actions{flex:1;justify-content:flex-end}
+.mebar .waitmsg{color:#555}
+.table.durak .status{background:rgba(10,20,40,.55);border-radius:99px;padding:2px 14px;align-self:center;font-size:14px;transition:background .3s}
+.table.durak .status.mine{background:rgba(40,150,60,.8)}
+.table.durak .log{display:none}
+@media (max-width:480px){
+  .dhand .pcard{--w:66px;margin-left:-24px}
+  .pair{width:calc(60px + 20px);height:calc(60px*1.4 + 10px)}
+  .pair .pcard{--w:60px}
+  .pair .pcard.d{left:20px}
+  .table.durak .opps{gap:14px}
+  .avatar{width:46px;height:46px;font-size:20px}
+}
