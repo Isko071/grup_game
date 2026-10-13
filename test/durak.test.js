@@ -161,3 +161,39 @@ test('боты доигрывают партии до конца (все вар�
     }
   }
 });
+
+test('бот дурака: подбирает отбой так, чтобы хватило карт на все атаки', () => {
+  const st = fresh(2);
+  st.hands.p1 = [c(1, 'h', 9), c(2, 'h', 10), c(3, 'c', 7)];
+  st.table = [{ a: c(10, 'h', 8), d: null }, { a: c(11, 'h', 6), d: null }];
+  const m = durak.botMove(st, 'p1');
+  // 10♥ нужна только на 8♥: 9♥ должна бить 6♥ или 8♥, но оставить 10♥ для другой — бот не должен застрять
+  assert.strictEqual(m.type, 'defend');
+  assert.deepStrictEqual([m.attackId, m.cardId].sort(), [m.attackId, m.cardId].sort());
+  durak.act(st, 'p1', m);
+  const m2 = durak.botMove(st, 'p1');
+  assert.strictEqual(m2.type, 'defend'); // второй атаке тоже нашлась карта
+  assert.ok(durak.act(st, 'p1', m2).ok);
+});
+
+test('бот дурака: не жжёт старший козырь на мелочь при большой колоде, но берёт', () => {
+  const st = fresh(2);
+  st.hands.p1 = [c(1, 's', 13), c(2, 'c', 7)]; // козырь пики; бить 6♥ нечем, кроме короля-козыря
+  st.table = [{ a: c(10, 'h', 6), d: null }];
+  const m = durak.botMove(st, 'p1');
+  assert.strictEqual(m.type, 'take');
+});
+
+test('бот дурака: при «беру» подкидывает некозырь, а в конце игры и козырь', () => {
+  const st = fresh(2);
+  st.deck = [];
+  st.hands.p0 = [c(1, 's', 8), c(2, 'd', 8), c(5, 'h', 7)];
+  st.hands.p1 = [c(3, 'h', 10)];
+  st.table = [{ a: c(10, 'h', 8), d: null }];
+  st.taking = true;
+  assert.deepStrictEqual(durak.botMove(st, 'p0'), { type: 'attack', cardId: 2 }); // сначала некозырь 8♦
+  st.hands.p0 = [c(1, 's', 8), c(5, 'h', 7)]; // подходит только козырь, колода пуста — сбрасываем
+  assert.deepStrictEqual(durak.botMove(st, 'p0'), { type: 'attack', cardId: 1 });
+  st.deck = [c(900, 'h', 6), c(901, 'h', 7), c(902, 'h', 8), c(903, 'h', 9), c(904, 'h', 10)]; // колода есть — козырь бережём
+  assert.deepStrictEqual(durak.botMove(st, 'p0'), { type: 'pass' });
+});

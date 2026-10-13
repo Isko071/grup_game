@@ -319,24 +319,46 @@ function view(st, pid, ctx) {
   };
 }
 
-// Простой бот: на двух картах нажимает «УНО!», ловит забывших, играет первую подходящую карту
-// (дикие придерживает), цвет выбирает тот, которого больше в руке.
+// Бот. Видит только то, что видит игрок: свою руку, верхнюю карту, число карт у соперников.
+//  - на двух картах сам жмёт «УНО!», чужих забывших ловит почти всегда;
+//  - если следующему осталась пара карт, бьёт его «пропуском», «+2», «+4»;
+//  - «дикие» и действия бережёт, пока рука большая, и пускает в ход, когда нужно добить или остановить соперника;
+//  - при штрафе кладёт «+2», а «+4» бережёт, пока нет угрозы;
+//  - цвет выбирает по большинству оставшихся карт.
 function botMove(st, pid) {
   if (st.over || st.out[pid]) return null;
   const hand = st.hands[pid];
-  if (hand.length === 2 && !st.called[pid]) return { type: 'uno' };
+  if (hand.length <= 2 && !st.called[pid]) return { type: 'uno' };
   const t = st.catchable;
-  if (t && t !== pid && !st.out[t] && st.hands[t].length === 1 && !st.called[t] && st.rnd() < 0.5) return { type: 'uno' };
+  if (t && t !== pid && !st.out[t] && st.hands[t].length === 1 && !st.called[t] && st.rnd() < 0.7) return { type: 'uno' };
   if (currentId(st) !== pid) return null;
+
   const ok = hand.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c));
-  if (ok.length) {
-    ok.sort((a, b) => (a.color === 'w') - (b.color === 'w'));
-    const counts = {};
-    for (const h of hand) if (h.color !== 'w') counts[h.color] = (counts[h.color] || 0) + 1;
-    const color = Object.keys(counts).sort((x, y) => counts[y] - counts[x])[0] || COLORS[Math.floor(st.rnd() * 4)];
-    return { type: 'play', cardId: ok[0].id, color };
-  }
-  return st.drawn !== null ? { type: 'pass' } : { type: 'draw' };
+  if (!ok.length) return st.drawn !== null ? { type: 'pass' } : { type: 'draw' };
+
+  const nextId = st.order[advance(st, st.turn, 1)];
+  const threat = nextId !== pid && st.hands[nextId].length <= 2; // следующий вот-вот выиграет
+  const colorCount = {};
+  for (const h of hand) if (h.color !== 'w') colorCount[h.color] = (colorCount[h.color] || 0) + 1;
+  const score = (c) => {
+    const v = c.value;
+    let sc = 0;
+    if (v === 'wild') sc = hand.length <= 3 ? 4 : -1;
+    else if (v === '+4') sc = st.pending > 0 ? (threat ? 8 : 1) : (hand.length <= 3 ? 5 : -2);
+    else if (v === '+2') sc = st.pending > 0 ? 3 : -1;
+    else if (v === 'skip' || v === 'rev') sc = -1; // действия приберегаем: числа уходят первыми
+    if (threat && (v === '+2' || v === '+4' || v === 'skip')) sc += 7;
+    if (c.color !== 'w') sc += 0.4 * (colorCount[c.color] || 0); // остаёмся в «своём» цвете
+    return sc;
+  };
+  const best = ok.map((c) => ({ c, sc: score(c) })).sort((x, y) => y.sc - x.sc)[0];
+  // только что взятую «дикую» можно оставить, если нет угрозы
+  if (st.drawn !== null && best.sc < 0 && !threat && hand.length > 3) return { type: 'pass' };
+
+  const left = {};
+  for (const h of hand) if (h.id !== best.c.id && h.color !== 'w') left[h.color] = (left[h.color] || 0) + 1;
+  const color = Object.keys(left).sort((x, y) => left[y] - left[x])[0] || COLORS[Math.floor(st.rnd() * 4)];
+  return { type: 'play', cardId: best.c.id, color };
 }
 
 // Автоход по таймеру: взять карту (или принять штраф), а если уже взял — пас.
@@ -350,5 +372,5 @@ module.exports = {
   currentPlayer: currentId,
   turnKey: (st) => `${currentId(st)}:${st.drawn !== null}`,
   isOver: (st) => st.over,
-  _internal: { buildDeck, isPlayable, currentId },
+  _internal: { buildDeck, isPlayable, currentId, advance },
 };
