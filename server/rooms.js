@@ -97,6 +97,8 @@ class Room {
     if (!g) return 'Игра недоступна';
     if (this.players.length < g.meta.minPlayers) return `Нужно минимум ${g.meta.minPlayers} игрока`;
     if (this.players.length > g.meta.maxPlayers) return `Максимум ${g.meta.maxPlayers} игроков`;
+    const bad = g.validate && g.validate(this.players, { ...g.meta.defaultRules, ...this.rules });
+    if (bad) return bad;
     this.game = g.create(this.players, this.rules);
     this.game.names = Object.fromEntries(this.players.map((p) => [p.id, p.name]));
     this.phase = 'playing';

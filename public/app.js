@@ -272,8 +272,107 @@
   const COLOR_RU = { r: 'красный', y: 'жёлтый', g: 'зелёный', b: 'синий' };
 
   function renderGame() {
-    if (S.gameId === 'uno') return renderUno();
+    const fn = { uno: renderUno, durak: renderDurak }[S.gameId];
+    if (fn) return fn();
     app.innerHTML = '<div class="card-box">Эта игра пока недоступна</div>';
+  }
+
+  // ---------- дурак ----------
+  const SUIT = { h: '♥', d: '♦', c: '♣', s: '♠' };
+  const SUIT_RU = { h: 'черви', d: 'бубны', c: 'трефы', s: 'пики' };
+  const RANK = { 11: 'В', 12: 'Д', 13: 'К', 14: 'Т' };
+  const rk = (r) => RANK[r] || r;
+  const pcardHtml = (c, cls = '', attrs = '') => {
+    const red = c.suit === 'h' || c.suit === 'd';
+    const label = `<span>${rk(c.rank)}</span><small>${SUIT[c.suit]}</small>`;
+    return `<div class="pcard ${red ? 'red' : ''} ${cls}" ${attrs}><span class="rk">${label}</span><span class="big">${SUIT[c.suit]}</span><span class="rk br">${label}</span></div>`;
+  };
+  let dSel = null; // выбранная карта защитника
+
+  function renderDurak() {
+    const g = S.game;
+    const amHost = S.host === S.me;
+    const me = S.me;
+    const isDef = g.defender === me;
+    const myIdx = g.order.indexOf(me);
+    const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
+    if (dSel !== null && !g.hand.some((c) => c.id === dSel)) dSel = null;
+    if (!isDef || g.taking) dSel = null;
+    const targets = dSel !== null && g.canDefend[dSel] ? g.canDefend[dSel] : [];
+    const handEl = app.querySelector('.dhand');
+    const scroll = handEl ? handEl.scrollLeft : 0;
+
+    let status;
+    if (g.over) status = g.loser ? `🤡 Дурак — ${esc(nameOf(g.loser))}` : '🤝 Ничья';
+    else if (g.out.includes(me)) status = 'Вы вышли из игры 🎉';
+    else if (isDef) status = g.taking ? 'Вы берёте. Ждём, пока подкинут' : (g.canTake ? 'Отбейтесь или возьмите карты' : 'Ждём ход');
+    else if (g.table.length === 0 && g.attacker === me) status = 'Ваш ход — сходите любой картой';
+    else if (g.canPass || g.canAttack.length) status = g.taking ? 'Можно подкинуть' : 'Можно подкинуть или нажать «Бито»';
+    else status = `Ходит ${esc(nameOf(g.attacker))}, защищается ${esc(nameOf(g.defender))}`;
+
+    const role = (id) => (g.out.includes(id) ? '🏁 вышел' : id === g.defender ? '🛡 защита' : id === g.attacker ? '⚔ атака' : '');
+    const cls = (c) => {
+      const t = c.suit === g.trumpSuit ? 'trump' : '';
+      if (isDef && !g.taking) return `${g.canDefend[c.id] || g.canTransfer.includes(c.id) ? 'ok' : 'no'} ${dSel === c.id ? 'sel' : ''} ${t}`;
+      return `${g.canAttack.includes(c.id) ? 'ok' : 'no'} ${t}`;
+    };
+
+    app.innerHTML = `
+      <div class="table">
+        <div class="opps">${others.map((id) => `
+          <div class="opp ${(g.defender === id || g.attacker === id) && !g.over ? 'turn' : ''}" style="${g.out.includes(id) ? 'opacity:.55' : ''}">
+            <div class="n">${esc(nameOf(id))}</div>
+            <div class="c">🂠 ${g.counts[id]}</div>
+            <div class="role">${role(id)}</div>
+          </div>`).join('')}</div>
+        <div class="center" style="align-items:stretch;flex-wrap:nowrap;gap:12px">
+          <div class="dside">
+            <div class="deckbox">
+              ${g.deckLeft > 0 ? `${pcardHtml(g.trump, 'trumpc sm')}<div class="pcard back sm stack"></div><div class="cnt">${g.deckLeft}</div>` : `<div class="pcard sm trumpc" style="background:transparent;border:2px dashed rgba(255,255,255,.4);box-shadow:none;color:#fff"><span class="big" style="opacity:1">${SUIT[g.trumpSuit]}</span></div>`}
+            </div>
+            <span>козырь ${SUIT[g.trumpSuit]} ${SUIT_RU[g.trumpSuit]}</span>
+            <span>бито: ${g.discard}</span>
+          </div>
+          <div class="dtable" id="dtable">${g.table.map((p, i) => `
+            <div class="pair ${targets.includes(i) ? 'target' : ''}" data-att="${i}">
+              ${pcardHtml(p.a, p.a.suit === g.trumpSuit ? 'trump' : '')}
+              ${p.d ? pcardHtml(p.d, 'd ' + (p.d.suit === g.trumpSuit ? 'trump' : '')) : ''}
+            </div>`).join('') || '<span style="color:rgba(255,255,255,.6);align-self:center">Стол пуст</span>'}</div>
+        </div>
+        <div class="status">${status}</div>
+        <div class="log">${esc(g.log[g.log.length - 1] || '')}</div>
+        <div class="dhand">${g.hand.map((c) => pcardHtml(c, cls(c), `data-id="${c.id}"`)).join('')}</div>
+        <div class="actions">
+          ${dSel !== null && g.canTransfer.includes(dSel) ? '<button class="btn" id="dTransfer">↪ Перевести</button>' : ''}
+          ${g.canTake ? '<button class="btn danger" id="dTake">Беру</button>' : ''}
+          ${g.canPass ? `<button class="btn ghost" id="dPass">${g.taking ? 'Хватит' : 'Бито'}</button>` : ''}
+          ${g.over && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
+          ${g.over && !amHost ? '<span style="color:#fff">Ждём хоста…</span>' : ''}
+        </div>
+      </div>`;
+
+    const nh = app.querySelector('.dhand'); if (nh) nh.scrollLeft = scroll;
+    const act = (a) => emit('game:action', a);
+    app.querySelectorAll('.dhand .pcard.ok').forEach((el) => {
+      el.onclick = () => {
+        const id = Number(el.dataset.id);
+        if (isDef && !g.taking) {
+          const t = g.canDefend[id] || [];
+          const canTr = g.canTransfer.includes(id);
+          if (t.length === 1 && !canTr) { dSel = null; return act({ type: 'defend', attackId: t[0], cardId: id }); }
+          if (!t.length && canTr && g.canTransfer.includes(id)) { dSel = id; return renderDurak(); }
+          dSel = dSel === id ? null : id; renderDurak();
+        } else act({ type: 'attack', cardId: id });
+      };
+    });
+    app.querySelectorAll('.pair.target').forEach((el) => {
+      el.onclick = () => { const id = dSel; dSel = null; act({ type: 'defend', attackId: Number(el.dataset.att), cardId: id }); };
+    });
+    const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    bind('#dTake', () => act({ type: 'take' }));
+    bind('#dPass', () => act({ type: 'pass' }));
+    bind('#dTransfer', () => { const id = dSel; dSel = null; act({ type: 'transfer', cardId: id }); });
+    bind('#again', () => emit('room:lobby'));
   }
 
   function renderUno() {

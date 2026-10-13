@@ -162,3 +162,33 @@ select.sel{background:var(--bg);border:1px solid var(--border);border-radius:10p
   .chat{top:0}
 }
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+/* ---- игральные карты (дурак) ---- */
+.pcard{--w:64px;width:var(--w);height:calc(var(--w)*1.4);border-radius:calc(var(--w)*.1);flex:none;position:relative;background:#fff;color:#1b1b1b;
+  border:1px solid #c9c9c9;box-shadow:0 3px 8px rgba(0,0,0,.4);font-weight:800;user-select:none;transition:transform .15s,filter .15s}
+.pcard.red{color:#d62828}
+.pcard .rk{position:absolute;top:calc(var(--w)*.05);left:calc(var(--w)*.08);font-size:calc(var(--w)*.3);line-height:1}
+.pcard .rk small{display:block;font-size:calc(var(--w)*.26);margin-top:1px}
+.pcard .big{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:calc(var(--w)*.62);opacity:.9}
+.pcard .rk.br{top:auto;left:auto;bottom:calc(var(--w)*.05);right:calc(var(--w)*.08);transform:rotate(180deg)}
+.pcard.trump{box-shadow:0 0 0 2px #ffd24a,0 3px 8px rgba(0,0,0,.4)}
+.pcard.back{background:repeating-linear-gradient(45deg,#2b3a8c 0 6px,#34459f 6px 12px);border:calc(var(--w)*.06) solid #fff}
+.pcard.sm{--w:40px}
+.dhand .pcard{margin-left:-16px;cursor:default}
+.dhand .pcard:first-child{margin-left:0}
+.dhand .pcard.no{filter:brightness(.62)}
+.dhand .pcard.ok{cursor:pointer;transform:translateY(-6px)}
+.dhand .pcard.ok:hover{transform:translateY(-14px);z-index:2}
+.dhand .pcard.sel{transform:translateY(-22px);z-index:3;box-shadow:0 0 0 3px #ffd24a,0 6px 12px rgba(0,0,0,.5)}
+.dhand{display:flex;overflow-x:auto;padding:26px 8px 8px;justify-content:safe center}
+.dtable{flex:1;display:flex;flex-wrap:wrap;gap:14px 12px;align-content:center;justify-content:center;min-height:170px;padding:6px}
+.pair{position:relative;width:calc(64px + 22px);height:calc(64px*1.4 + 10px)}
+.pair .pcard{position:absolute;top:0;left:0}
+.pair .pcard.d{left:22px;top:10px;transform:rotate(8deg)}
+.pair.target .pcard:first-child{box-shadow:0 0 0 3px #ffd24a,0 0 16px rgba(255,210,74,.8);cursor:pointer;animation:pulse 1s infinite}
+.deckbox{position:relative;width:96px;height:96px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px}
+.deckbox .pcard.trumpc{position:absolute;left:0;top:14px;transform:rotate(90deg)}
+.deckbox .pcard.stack{position:absolute;left:30px;top:2px}
+.deckbox .cnt{position:absolute;left:34px;top:30px;z-index:3;font-weight:800;font-size:18px;color:#fff;text-shadow:0 1px 3px #000}
+.role{font-size:12px;margin-top:2px}
+.dside{display:flex;flex-direction:column;align-items:center;gap:6px;color:#fff;font-size:12px}
