@@ -2,7 +2,7 @@
   --bg:#f4f1ea; --surface:#ffffff; --surface2:#ebe6db; --text:#23202e; --muted:#6b6678;
   --accent:#6c5ce7; --accent-text:#fff; --border:#d9d3c6; --danger:#d63031; --ok:#00a37a;
   --felt:#2f7d5b; --shadow:0 4px 14px rgba(40,30,70,.15);
-  --c-r:#e0413a; --c-y:#f2b705; --c-g:#2fa84f; --c-b:#2f6fe0; --c-w:#2b2b34;
+  --c-r:#e8262d; --c-y:#f7c600; --c-g:#3fa535; --c-b:#0a58c4; --c-w:#1a1a1a;
 }
 :root[data-theme="dark"]{
   --bg:#12111a; --surface:#1d1b2a; --surface2:#292639; --text:#ece9f7; --muted:#9a95b0;
@@ -87,24 +87,35 @@ main{flex:1;display:flex;flex-direction:column;width:100%;max-width:1000px;margi
 .hand{display:flex;gap:0;overflow-x:auto;padding:14px 8px 8px;justify-content:safe center;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
 .actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
 
-.card{--w:68px;width:var(--w);height:calc(var(--w)*1.5);border-radius:calc(var(--w)*.14);flex:none;position:relative;
-  background:var(--cc);color:#fff;border:3px solid #fff;box-shadow:0 3px 8px rgba(0,0,0,.35);
-  display:flex;align-items:center;justify-content:center;font-weight:900;font-size:calc(var(--w)*.46);
-  user-select:none;transition:transform .15s,opacity .15s;text-shadow:0 2px 3px rgba(0,0,0,.35)}
-.card::before{content:"";position:absolute;inset:14% 10%;border-radius:50%;background:rgba(255,255,255,.2);transform:rotate(-24deg)}
-.card .v{position:relative;z-index:1}
-.card .corner{position:absolute;top:4px;left:6px;font-size:calc(var(--w)*.2);z-index:1}
+.card{--w:68px;width:var(--w);height:calc(var(--w)*1.5);border-radius:calc(var(--w)*.13);flex:none;position:relative;overflow:hidden;
+  background:var(--cc);color:var(--cc);border:calc(var(--w)*.05) solid #fff;box-shadow:0 3px 8px rgba(0,0,0,.4);
+  display:flex;align-items:center;justify-content:center;font-weight:900;font-style:italic;font-size:calc(var(--w)*.5);
+  user-select:none;transition:transform .15s,opacity .15s,filter .15s}
+/* классический белый овал под углом */
+.card::before{content:"";position:absolute;left:8%;right:8%;top:14%;bottom:14%;border-radius:50%;background:#fff;transform:rotate(-28deg)}
+.card .v{position:relative;z-index:1;text-shadow:calc(var(--w)*.03) calc(var(--w)*.03) 0 rgba(0,0,0,.55);color:var(--cc)}
+.card .corner{position:absolute;z-index:1;color:#fff;font-size:calc(var(--w)*.2);text-shadow:1px 1px 0 rgba(0,0,0,.5)}
+.card .corner.tl{top:calc(var(--w)*.04);left:calc(var(--w)*.08)}
+.card .corner.br{bottom:calc(var(--w)*.04);right:calc(var(--w)*.08);transform:rotate(180deg)}
 .card.r{--cc:var(--c-r)}.card.y{--cc:var(--c-y)}.card.g{--cc:var(--c-g)}.card.b{--cc:var(--c-b)}
-.card.w{--cc:conic-gradient(var(--c-r) 0 25%,var(--c-b) 0 50%,var(--c-g) 0 75%,var(--c-y) 0)}
-.card.y{color:#2b2400;text-shadow:none}
-.card.back{--cc:#1c1830;background:linear-gradient(135deg,#1c1830,#3a2f6b);}
-.card.back .v{font-size:calc(var(--w)*.2);color:#ff6b6b;transform:rotate(-24deg);letter-spacing:1px}
+.card.w{--cc:var(--c-w)}
+.card.w::before{background:conic-gradient(var(--c-r) 0 25%,var(--c-b) 0 50%,var(--c-g) 0 75%,var(--c-y) 0)}
+.card.w .v{color:#fff;font-size:calc(var(--w)*.4)}
+.card.w.four .v{font-size:calc(var(--w)*.42)}
+.card.back{--cc:#111;color:#fff}
+.card.back::before{background:var(--c-r)}
+.card.back .v{font-size:calc(var(--w)*.3);color:var(--c-y);transform:rotate(-28deg);letter-spacing:1px;text-shadow:calc(var(--w)*.03) calc(var(--w)*.03) 0 #000}
 .hand .card{margin-left:-14px;cursor:pointer}
 .hand .card:first-child{margin-left:0}
 .hand .card.no{filter:brightness(.55) saturate(.7);cursor:default}
 .hand .card.ok{transform:translateY(-8px)}
 .hand .card.ok:hover{transform:translateY(-18px);z-index:2}
 .card.sm{--w:40px}
+.timer{height:6px;background:rgba(0,0,0,.3);border-radius:99px;overflow:hidden}
+.timer i{display:block;height:100%;background:#ffd24a;transform-origin:left;transition:background .3s}
+.timer.low i{background:var(--c-r)}
+.timer-txt{color:#fff;font-size:13px;text-align:center}
+select.sel{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:8px 10px;color:var(--text)}
 .pop{animation:pop .35s ease-out}
 @keyframes pop{from{transform:translateY(-60px) rotate(-12deg) scale(1.2);opacity:0}to{transform:none;opacity:1}}
 .deal{animation:deal .4s ease-out both}

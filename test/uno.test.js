@@ -66,12 +66,12 @@ test('+2 на +2 при включённом правиле копит штра�
 });
 
 test('+4 на +4 только при включённом правиле', () => {
-  const off = fresh();
+  const off = fresh(3, { strictWild4: false });
   off.hands.p0 = [card(1, 'w', '+4'), card(2, 'r', '1')];
   off.hands.p1 = [card(3, 'w', '+4'), card(4, 'r', '1')];
   uno.act(off, 'p0', { type: 'play', cardId: 1, color: 'g' });
   assert.ok(uno.act(off, 'p1', { type: 'play', cardId: 3, color: 'g' }).error);
-  const on = fresh(3, { stackPlus4: true });
+  const on = fresh(3, { stackPlus4: true, strictWild4: false });
   on.hands.p0 = [card(1, 'w', '+4'), card(2, 'r', '1')];
   on.hands.p1 = [card(3, 'w', '+4'), card(4, 'r', '1')];
   uno.act(on, 'p0', { type: 'play', cardId: 1, color: 'g' });
@@ -144,4 +144,23 @@ test('боты доигрывают партию до конца', () => {
     }
     assert.ok(st.winner, 'партия не завершилась');
   }
+});
+
+test('«+4» только без карты нужного цвета (строгое правило)', () => {
+  const st = fresh();
+  st.hands.p0 = [card(1, 'w', '+4'), card(2, 'r', '1')];
+  assert.ok(uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' }).error);
+  assert.deepStrictEqual(uno.view(st, 'p0').playable, [2]);
+  st.hands.p0 = [card(1, 'w', '+4'), card(3, 'b', '1')];
+  assert.ok(uno.act(st, 'p0', { type: 'play', cardId: 1, color: 'g' }).ok);
+});
+
+test('автоход по таймеру: взять карту, затем пас', () => {
+  const st = fresh();
+  st.hands.p0 = [card(1, 'b', '3')];
+  st.draw = [card(51, 'r', '8')];
+  assert.deepStrictEqual(uno.timeoutMove(st, 'p0'), { type: 'draw' });
+  uno.act(st, 'p0', uno.timeoutMove(st, 'p0'));
+  assert.deepStrictEqual(uno.timeoutMove(st, 'p0'), { type: 'pass' });
+  assert.strictEqual(uno.timeoutMove(st, 'p1'), null);
 });

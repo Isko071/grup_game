@@ -20,6 +20,9 @@ class Room {
     this.chat = [];
     this.emptyTimer = null;
     this.botTimer = null;
+    this.turnTimer = null;
+    this.deadline = null;
+    this.turnKey = null;
     this.onEmpty = onEmpty;
   }
 
@@ -97,7 +100,8 @@ class Room {
     this.game = g.create(this.players, this.rules);
     this.game.names = Object.fromEntries(this.players.map((p) => [p.id, p.name]));
     this.phase = 'playing';
-    this.scheduleBot();
+    this.turnKey = null;
+    this.afterMove();
     return null;
   }
 
@@ -106,9 +110,46 @@ class Room {
     const g = registry.games[this.gameId];
     const res = g.act(this.game, pid, action);
     if (res.error) return res;
-    if (g.isOver(this.game)) { this.phase = 'over'; clearTimeout(this.botTimer); }
-    else this.scheduleBot();
+    this.afterMove();
     return res;
+  }
+
+  afterMove() {
+    const g = registry.games[this.gameId];
+    if (g.isOver(this.game)) {
+      this.phase = 'over';
+      clearTimeout(this.botTimer);
+      this.clearTurnTimer();
+      return;
+    }
+    this.scheduleBot();
+    this.scheduleTurnTimer();
+  }
+
+  clearTurnTimer() { clearTimeout(this.turnTimer); this.turnTimer = null; this.deadline = null; this.turnKey = null; }
+
+  // Таймер хода: по истечении делаем автоход за текущего игрока (боты ходят сами).
+  scheduleTurnTimer() {
+    const g = registry.games[this.gameId];
+    const sec = Number((this.rules.turnTimer ?? g.meta.defaultRules.turnTimer) || 0);
+    if (!sec || !g.timeoutMove) return this.clearTurnTimer();
+    const key = g.turnKey(this.game);
+    if (key === this.turnKey && this.turnTimer) return; // тот же ход — не сбрасываем
+    this.clearTurnTimer();
+    this.turnKey = key;
+    const pid = g.currentPlayer(this.game);
+    const pl = this.byId(pid);
+    if (!pl || pl.bot) return;
+    this.deadline = Date.now() + sec * 1000;
+    this.turnTimer = setTimeout(() => {
+      this.turnTimer = null;
+      if (this.phase !== 'playing') return;
+      const a = g.timeoutMove(this.game, pid);
+      if (!a) return;
+      const res = this.act(pid, a);
+      if (!res.error) { this.pushChat(null, `${pl.name}: время вышло`); this.broadcast(res.sound); }
+    }, sec * 1000);
+    this.turnTimer.unref?.();
   }
 
   scheduleBot() {
@@ -133,6 +174,7 @@ class Room {
 
   backToLobby() {
     clearTimeout(this.botTimer);
+    this.clearTurnTimer();
     this.game = null;
     this.phase = 'lobby';
     // отключившиеся люди уходят
@@ -154,6 +196,8 @@ class Room {
       players: this.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, connected: p.connected })),
       chat: this.chat.slice(-40),
       game: this.game && this.phase !== 'lobby' ? g.view(this.game, pid) : null,
+      timeLeft: this.deadline ? Math.max(0, this.deadline - Date.now()) : null,
+      timerTotal: this.deadline ? Number(this.rules.turnTimer ?? g.meta.defaultRules.turnTimer) * 1000 : null,
       reactions: REACTIONS,
     };
   }

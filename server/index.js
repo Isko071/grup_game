@@ -86,7 +86,11 @@ io.on('connection', (socket) => {
     }
     if (p.rules && typeof p.rules === 'object') {
       const schema = registry.games[room.gameId].meta.rulesSchema;
-      for (const s of schema) if (s.key in p.rules && s.type === 'bool') room.rules[s.key] = !!p.rules[s.key];
+      for (const s of schema) {
+        if (!(s.key in p.rules)) continue;
+        if (s.type === 'bool') room.rules[s.key] = !!p.rules[s.key];
+        else if (s.type === 'select' && s.options.includes(Number(p.rules[s.key]))) room.rules[s.key] = Number(p.rules[s.key]);
+      }
     }
     ack({ ok: true });
     room.broadcast();

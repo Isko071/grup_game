@@ -236,7 +236,10 @@
             ${S.games.map((g) => `<button class="${g.id === S.gameId ? 'on' : ''}" data-game="${g.id}" ${amHost ? '' : 'disabled'}>${esc(g.title)}</button>`).join('')}
             ${S.soon.map((g) => `<button disabled title="Скоро">${esc(g.title)} · скоро</button>`).join('')}
           </div>
-          <div>${(game.rulesSchema || []).map((r) => `
+          <div>${(game.rulesSchema || []).map((r) => r.type === 'select' ? `
+            <div class="rule"><span>${esc(r.label)}</span>
+              <select class="sel" data-sel="${r.key}" ${amHost ? '' : 'disabled'}>${r.options.map((o) => `<option value="${o}" ${Number(S.rules[r.key]) === o ? 'selected' : ''}>${o === 0 ? esc(r.zero) : o + ' ' + esc(r.unit)}</option>`).join('')}</select>
+            </div>` : `
             <div class="rule"><span>${esc(r.label)}</span>
               <button class="switch ${S.rules[r.key] ? 'on' : ''}" data-rule="${r.key}" ${amHost ? '' : 'disabled'} aria-pressed="${!!S.rules[r.key]}"></button>
             </div>`).join('')}</div>
@@ -251,6 +254,7 @@
     on('[data-kick]', (el) => emit('room:kick', { id: el.dataset.kick }));
     on('[data-game]', (el) => emit('room:settings', { gameId: el.dataset.game }));
     on('[data-rule]', (el) => emit('room:settings', { rules: { [el.dataset.rule]: !S.rules[el.dataset.rule] } }));
+    app.querySelectorAll('[data-sel]').forEach((el) => (el.onchange = () => emit('room:settings', { rules: { [el.dataset.sel]: Number(el.value) } })));
     const ab = $('#addBot'); if (ab) ab.onclick = () => emit('room:addBot');
     const st = $('#start'); if (st) st.onclick = () => emit('room:start');
     $('#leave').onclick = leave;
@@ -258,10 +262,10 @@
   }
 
   // ---------- карты ----------
-  const SYM = { skip: '⊘', rev: '⇄', '+2': '+2', wild: '★', '+4': '+4' };
+  const SYM = { skip: '⊘', rev: '⇄', '+2': '+2', wild: '', '+4': '+4' };
   const cardHtml = (c, cls = '', attrs = '') => {
     const v = SYM[c.value] || c.value;
-    return `<div class="card ${c.color} ${cls}" ${attrs}><span class="corner">${v}</span><span class="v">${v}</span></div>`;
+    return `<div class="card ${c.color} ${c.value === '+4' ? 'four' : ''} ${cls}" ${attrs}><span class="corner tl">${v}</span><span class="v">${v}</span><span class="corner br">${v}</span></div>`;
   };
   const backHtml = (cls = '') => `<div class="card back ${cls}"><span class="v">UNO</span></div>`;
   const COLOR_CSS = { r: 'var(--c-r)', y: 'var(--c-y)', g: 'var(--c-g)', b: 'var(--c-b)' };
@@ -313,6 +317,7 @@
             ${g.pending ? `<span class="pending">+${g.pending}</span>` : ''}
           </div>
         </div>
+        ${S.timeLeft != null ? '<div class="timer" id="timer"><i></i></div><div class="timer-txt" id="timerTxt"></div>' : ''}
         <div class="status">${status}</div>
         <div class="log">${esc(g.log[g.log.length - 1] || '')}</div>
         <div class="hand">${g.hand.map((c) => {
@@ -329,6 +334,7 @@
         </div>
       </div>`;
 
+    startTimer();
     const nh = app.querySelector('.hand'); if (nh) nh.scrollLeft = scroll;
     const act = (a) => emit('game:action', a);
     app.querySelectorAll('.hand .card.ok').forEach((el) => {
@@ -344,6 +350,23 @@
     const u = $('#unoBtn'); if (u) u.onclick = () => act({ type: 'uno' });
     const p = $('#passBtn'); if (p) p.onclick = () => act({ type: 'pass' });
     const a = $('#again'); if (a) a.onclick = () => emit('room:lobby');
+  }
+
+  // обратный отсчёт хода: S.timeLeft приходит с сервера в момент рассылки
+  let timerRaf = null;
+  function startTimer() {
+    cancelAnimationFrame(timerRaf);
+    const bar = $('#timer');
+    if (!bar || S.timeLeft == null) return;
+    const t0 = performance.now(); const left = S.timeLeft; const total = S.timerTotal || left || 1;
+    const tick = () => {
+      const rem = Math.max(0, left - (performance.now() - t0));
+      bar.firstElementChild.style.transform = `scaleX(${rem / total})`;
+      bar.classList.toggle('low', rem < 6000);
+      const txt = $('#timerTxt'); if (txt) txt.textContent = S.game && S.game.turn === S.me ? `Ваш ход: ${Math.ceil(rem / 1000)} с` : '';
+      if (rem > 0 && $('#timer') === bar) timerRaf = requestAnimationFrame(tick);
+    };
+    tick();
   }
 
   function pickColor(cb) {

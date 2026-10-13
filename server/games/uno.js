@@ -9,10 +9,12 @@ const meta = {
   minPlayers: 2,
   maxPlayers: 10,
   supportsBots: true,
-  defaultRules: { stackPlus2: false, stackPlus4: false },
+  defaultRules: { stackPlus2: false, stackPlus4: false, strictWild4: true, turnTimer: 30 },
   rulesSchema: [
+    { key: 'strictWild4', label: '«+4» только если нет карты нужного цвета (официальное правило)', type: 'bool' },
     { key: 'stackPlus2', label: 'Накладывать +2 на +2', type: 'bool' },
     { key: 'stackPlus4', label: 'Стаканье +4 на +4', type: 'bool' },
+    { key: 'turnTimer', label: 'Таймер хода', type: 'select', options: [0, 15, 30, 60], unit: 'с', zero: 'без таймера' },
   ],
 };
 
@@ -96,12 +98,13 @@ function step(st, n = 1, from = st.turn) {
 function topCard(st) { return st.discard[st.discard.length - 1]; }
 function currentId(st) { return st.order[st.turn]; }
 
-function isPlayable(st, card) {
+function isPlayable(st, card, hand) {
   if (st.pending > 0) {
     if (st.pendingType === '+2') return card.value === '+2' && st.rules.stackPlus2;
     if (st.pendingType === '+4') return card.value === '+4' && st.rules.stackPlus4;
     return false;
   }
+  if (card.value === '+4' && st.rules.strictWild4 && hand && hand.some((c) => c.color === st.color)) return false;
   if (card.color === 'w') return true;
   const top = topCard(st);
   return card.color === st.color || card.value === top.value;
@@ -161,7 +164,7 @@ function act(st, pid, a) {
     if (!c) { endTurn(st, pid, 0); return { ok: true }; }
     hand.push(c);
     st.called[pid] = false;
-    if (isPlayable(st, c)) {
+    if (isPlayable(st, c, hand)) {
       st.drawn = c.id;
       say(st, `${nameOf(st, pid)} берёт карту`);
     } else {
@@ -183,7 +186,7 @@ function act(st, pid, a) {
     if (idx < 0) return { error: 'Нет такой карты' };
     const card = hand[idx];
     if (st.drawn !== null && st.drawn !== card.id) return { error: 'Можно сыграть только взятую карту' };
-    if (!isPlayable(st, card)) return { error: 'Эту карту нельзя сыграть' };
+    if (!isPlayable(st, card, hand)) return { error: card.value === '+4' ? '«+4» можно, только если нет карты нужного цвета' : 'Эту карту нельзя сыграть' };
     if (card.color === 'w' && !COLORS.includes(a.color)) return { error: 'Выберите цвет' };
 
     hand.splice(idx, 1);
@@ -242,7 +245,7 @@ function view(st, pid) {
     counts: Object.fromEntries(st.order.map((id) => [id, st.hands[id].length])),
     called: st.called,
     hand: me,
-    playable: mine ? me.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c)).map((c) => c.id) : [],
+    playable: mine ? me.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c, me)).map((c) => c.id) : [],
     top: topCard(st),
     color: st.color,
     dir: st.dir,
@@ -265,7 +268,7 @@ function botMove(st, pid) {
   if (hand.length === 2 && !st.called[pid]) return { type: 'uno' };
   if (st.catchable && st.catchable !== pid && st.rnd() < 0.5) return { type: 'catch' };
   if (currentId(st) !== pid) return null;
-  const ok = hand.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c));
+  const ok = hand.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c, hand));
   if (ok.length) {
     ok.sort((a, b) => (a.color === 'w') - (b.color === 'w'));
     const c = ok[0];
@@ -277,4 +280,10 @@ function botMove(st, pid) {
   return st.drawn !== null ? { type: 'pass' } : { type: 'draw' };
 }
 
-module.exports = { meta, create, act, view, botMove, isOver: (st) => !!st.winner, _internal: { buildDeck, isPlayable, currentId } };
+// Автоход по таймеру: взять карту, а если уже взял — пас.
+function timeoutMove(st, pid) {
+  if (st.winner || currentId(st) !== pid) return null;
+  return st.drawn !== null ? { type: 'pass' } : { type: 'draw' };
+}
+
+module.exports = { meta, create, act, view, botMove, timeoutMove, currentPlayer: currentId, turnKey: (st) => currentId(st) + ':' + (st.drawn !== null), isOver: (st) => !!st.winner, _internal: { buildDeck, isPlayable, currentId } };
