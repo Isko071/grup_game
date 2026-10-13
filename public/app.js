@@ -577,7 +577,7 @@
     syncOrder($('#dtable'), pairEls);
 
     // рука: отсортирована (козыри в конце), карты, ушедшие на стол, переехали в пары выше
-    // козырь всегда первым (слева), остальные масти так, чтобы красные и чёрные чередовались; внутри масти — по возрастанию
+    // козырь всегда первым (слева), остальные масти так, чтобы красные и чёрные чередовались; внутри масти — по убыванию (старшие слева)
     const isRed = (x) => x === 'h' || x === 'd';
     const order = [g.trumpSuit];
     const rest = ['h', 'c', 'd', 's'].filter((x) => x !== g.trumpSuit);
@@ -585,7 +585,7 @@
       const i = rest.findIndex((x) => isRed(x) !== isRed(order[order.length - 1]));
       order.push(rest.splice(i >= 0 ? i : 0, 1)[0]);
     }
-    const hand = [...g.hand].sort((x, y) => order.indexOf(x.suit) - order.indexOf(y.suit) || x.rank - y.rank);
+    const hand = [...g.hand].sort((x, y) => order.indexOf(x.suit) - order.indexOf(y.suit) || y.rank - x.rank);
     const handEls = hand.map((c) => {
       const el = getCard(c);
       live.add(c.id);
