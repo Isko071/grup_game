@@ -123,12 +123,11 @@ function legalThrow(st, pid, card) {
   return tableRanks(st).has(card.rank);
 }
 
-const isDone = (st, pid) => !!st.passed[pid] || !st.hands[pid].some((c) => legalThrow(st, pid, c));
-
+// Раунд закрывается, только когда каждый подкидывающий сам сказал «бито»/«пас» — даже если подкидывать нечем
 function roundComplete(st) {
   if (st.table.length === 0) return false;
   if (!(st.taking || allCovered(st))) return false;
-  return throwerIds(st).every((id) => isDone(st, id));
+  return throwerIds(st).every((id) => !!st.passed[id]);
 }
 
 function canTransferCard(st, pid, card) {

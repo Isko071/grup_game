@@ -68,6 +68,8 @@ test('отбой: все отбиты, подкидывать нечего → �
   // у p0 остался 9♣ — совпадает достоинство 9 (стол: 7♥, 9♥) → ещё можно подкинуть, ждём пас
   assert.strictEqual(st.table.length, 1);
   assert.ok(durak.act(st, 'p0', { type: 'pass' }).ok);
+  assert.strictEqual(st.table.length, 1); // p2 тоже должен сказать «пас»
+  assert.ok(durak.act(st, 'p2', { type: 'pass' }).ok);
   assert.strictEqual(st.table.length, 0);
   assert.strictEqual(st.attacker, 'p1');
   assert.strictEqual(st.defender, 'p2');
@@ -84,7 +86,8 @@ test('«беру»: защитник забирает карты, ход пер�
   assert.ok(durak.act(st, 'p0', { type: 'pass' }).error); // защитник ещё отбивается
   durak.act(st, 'p1', { type: 'take' });
   durak.act(st, 'p0', { type: 'attack', cardId: 2 }); // подкинули при взятии
-  // подкидывать больше некому (у p0 нет карт, у p2 нет нужных) — раунд закрывается сам
+  assert.strictEqual(st.table.length, 2); // у p2 нечего подкинуть, но раунд не закрывается сам
+  assert.ok(durak.act(st, 'p2', { type: 'pass' }).ok); // каждый подкидывающий говорит «пас» сам
   assert.strictEqual(st.table.length, 0);
   assert.ok(st.hands.p1.length >= 3); // взял 2 карты + добор до 6
   assert.strictEqual(st.attacker, 'p2'); // пропустил ход
@@ -215,4 +218,21 @@ test('перед закрытием раунда сохраняется сним
   assert.strictEqual(e.hand.length, 1);
   assert.strictEqual(st.hands.p1.length, 6); // после добора
   assert.deepStrictEqual(durak.view(st, 'p0').lastEnd.hand.map((x) => x.id), [2]); // у каждого своя рука
+});
+
+
+test('раунд не закрывается сам: каждый подкидывающий должен нажать «пас», даже если нечем ходить', () => {
+  const st = fresh(3);
+  st.hands.p0 = [c(1, 'h', 7), c(2, 'c', 9)];
+  st.hands.p1 = [c(3, 'h', 9), c(4, 'c', 10)];
+  st.hands.p2 = [c(5, 'd', 12), c(6, 'd', 13)]; // подкидывать нечем (нет 7 и 9)
+  durak.act(st, 'p0', { type: 'attack', cardId: 1 });
+  durak.act(st, 'p1', { type: 'defend', attackId: 0, cardId: 3 });
+  assert.strictEqual(st.table.length, 1);
+  assert.ok(durak.act(st, 'p0', { type: 'pass' }).ok); // атакующий: «бито»
+  assert.strictEqual(st.table.length, 1); // p2 ещё не сказал «пас»
+  assert.deepStrictEqual([durak.view(st, 'p2').canPass, durak.view(st, 'p0').canPass], [true, false]);
+  assert.ok(durak.act(st, 'p2', { type: 'pass' }).ok);
+  assert.strictEqual(st.table.length, 0);
+  assert.strictEqual(st.attacker, 'p1');
 });

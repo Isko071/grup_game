@@ -84,7 +84,7 @@
       if (r && r.error === 'Вы не в комнате' && retry && (session || loadSession())) {
         if (await rejoin()) return res(await emit(ev, payload, false));
       }
-      if (r && r.error) toast(r.error);
+      if (r && r.error && !dTimer) toast(r.error); // пока интерфейс догоняет очередь, ошибки от «устаревших» нажатий не показываем
       res(r || {});
     }));
   }
@@ -138,7 +138,7 @@
   socket.on('kicked', (p) => { toast(p.reason || 'Вас убрали из комнаты'); session = null; S = null; store.del('session'); history.replaceState(null, '', '/'); $('#chat').hidden = true; $('#chatFab').hidden = true; renderHome(); });
 
   // В дураке между изменениями на столе держим паузу в секунду: иначе ходы (особенно ботов) мелькают слишком резко
-  const DURAK_GAP = 1000;
+  const DURAK_GAP = 1100;
   let dQueue = [];
   let dTimer = null;
   let dLastAt = 0;
@@ -274,7 +274,7 @@
     document.body.classList.toggle('inroom', !!S);
     $('#exitBtn').hidden = !S;
     if (!S) return renderHome();
-    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dLayout = null; dSel = null; mSel = null; uLayout = null; return renderLobby(); }
+    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dSel = null; mSel = null; uLayout = null; return renderLobby(); }
     renderGame();
   }
 
@@ -387,9 +387,16 @@
 
   const avatarColor = (name) => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 50% 42%)`; };
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let dLayout = null; // раскладка прошлого рендера — для анимации полёта карт
+  // ---------- дурак: постоянное дерево DOM и плавные перелёты ----------
+  // Элементы не пересоздаются при каждом ходе: карта — один и тот же узел, пока она на экране, и просто
+  // переезжает (рука → стол → бито/рука взявшего). Поэтому нет мерцания и «перезапуска» анимаций.
+  const D = { cards: new Map(), seats: new Map(), pairs: new Map(), prev: null, deckKey: '', discKey: '' };
+  // темп и кривая — как в раздаче карт в projeckt_one: спокойно, с мягким замедлением; карты вылетают по очереди
+  const FLY_MS = 750;
+  const FLY_EASE = 'cubic-bezier(.22,.8,.3,1)';
+  const STAGGER_MS = 160;
 
-  // Призрак карты, летящий из одного места в другое
+  // Призрак карты, летящий из одного места в другое (для карт, которых уже нет на экране)
   function flyGhost(html, from, to, delay = 0, w) {
     const g = document.createElement('div');
     g.className = 'flyghost';
@@ -398,172 +405,293 @@
     document.body.appendChild(g);
     const dx = (to.left + to.width / 2) - (from.left + from.width / 2);
     const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
-    const sc = to.width / from.width;
-    const a = g.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${dx}px,${dy}px) scale(${sc})`, opacity: 0.2 }],
-      { duration: 750, delay, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'both' });
+    const end = `translate(${dx}px,${dy}px) scale(${to.width / from.width})`;
+    const dur = FLY_MS + 150;
+    const card = g.firstElementChild;
+    if (card && card.classList.contains('pcard') && !card.classList.contains('back')) {
+      const cv = document.createElement('i');
+      cv.className = 'cover';
+      card.appendChild(cv);
+      cv.animate([{ opacity: 0, offset: 0.3 }, { opacity: 1, offset: 0.6 }], { duration: dur, delay, easing: 'linear', fill: 'both' });
+    }
+    const a = g.animate([{ transform: 'none', opacity: 1 }, { transform: end, opacity: 1, offset: 0.85 }, { transform: end, opacity: 0 }],
+      { duration: dur, delay, easing: FLY_EASE, fill: 'both' });
     a.onfinish = () => g.remove();
   }
 
-  function animateDurak(prev, now, g) {
-    if (REDUCED) return;
-    const seatRect = (id) => now.seats.get(id) || now.deck;
-    // кто потерял карты (сыграл) — по разнице счётчиков
+  // прямоугольник карты шириной w с центром в центре r (для призраков, вылетающих из колоды или аватара)
+  const cardAt = (r, w) => ({ left: r.left + r.width / 2 - w / 2, top: r.top + r.height / 2 - (w * 1.4) / 2, width: w, height: w * 1.4 });
+  const dRect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+  const elFromHtml = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+  function syncOrder(container, els) {
+    const keep = new Set(els);
+    [...container.children].forEach((ch) => { if (!keep.has(ch)) ch.remove(); });
+    els.forEach((el, i) => { if (container.children[i] !== el) container.insertBefore(el, container.children[i] || null); });
+  }
+  const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+
+  function buildDurak() {
+    app.innerHTML = `
+      <div class="table durak">
+        <div class="opps" id="dOpps"></div>
+        <div class="dtop">
+          <div class="dside"><div class="deckbox" id="deckbox"></div><span class="dlabel" id="dTrumpLbl"></span></div>
+          <div class="dside"><div class="discardbox" id="discardbox"></div><span class="dlabel" id="dDiscLbl"></span></div>
+        </div>
+        <div class="dtable" id="dtable"></div>
+        <div class="status" id="dStatus"></div>
+        <div class="dhandwrap" id="dHandWrap"><div class="dhand" id="dHand"></div></div>
+        <div class="mebar"><div id="dMeSeat"></div><div class="actions" id="dActions"></div></div>
+      </div>`;
+    D.cards.clear(); D.seats.clear(); D.pairs.clear(); D.prev = null; D.deckKey = ''; D.discKey = '';
+    $('#dHand').onclick = (e) => { const el = e.target.closest('.pcard'); if (el) onDurakHand(Number(el.dataset.id)); };
+    $('#dtable').onclick = (e) => { const pe = e.target.closest('.pair'); if (pe && pe.querySelectorAll('.pcard').length === 1) onDurakTarget(Number(pe.dataset.att)); };
+    $('#dActions').onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      const act = (a) => emit('game:action', a);
+      if (b.id === 'dTake') act({ type: 'take' });
+      else if (b.id === 'dPass') act({ type: 'pass' });
+      else if (b.id === 'dTransfer') { const id = dSel; dSel = null; act({ type: 'transfer', cardId: id }); }
+      else if (b.id === 'again') emit('room:lobby');
+    };
+  }
+
+  // Подсказок нет: нажатие на карту — это попытка хода, а подходит ли она, говорит сервер
+  function onDurakHand(id) {
+    const g = S.game;
+    if (g.defender === S.me && !g.taking) {
+      const open = g.table.filter((p) => !p.d).length;
+      if (!open) return;
+      // одна неотбитая карта и нет перевода — отбиваем сразу, иначе выбираем карту, а потом нажимаем на карту на столе
+      if (open === 1 && !S.rules.transfer) { const idx = g.table.findIndex((p) => !p.d); dSel = null; return emit('game:action', { type: 'defend', attackId: idx, cardId: id }); }
+      dSel = dSel === id ? null : id;
+      renderDurak();
+    } else emit('game:action', { type: 'attack', cardId: id });
+  }
+  function onDurakTarget(att) { const id = dSel; dSel = null; emit('game:action', { type: 'defend', attackId: att, cardId: id }); }
+
+  function syncSeat(id, g, isMe) {
+    let el = D.seats.get(id);
+    if (!el) {
+      el = elFromHtml(`<div class="seat ${isMe ? 'me' : ''}" data-seat="${id}"><div class="bubble"></div><div class="avatar"><span class="ini"></span><span class="rolebadge"></span></div><div class="sname"></div>${isMe ? '' : '<div class="fan"><span class="fanc"></span><span class="fcount"></span></div>'}</div>`);
+      D.seats.set(id, el);
+    }
+    const nm = nameOf(id);
+    const out = g.out.includes(id);
+    const badge = out ? '🏁' : id === g.defender ? '🛡' : id === g.attacker ? '⚔' : '';
+    const active = !g.over && !out && (g.defender === id ? g.table.some((p) => !p.d) && !g.taking : g.attacker === id && g.table.length === 0);
+    const av = el.querySelector('.avatar');
+    av.style.background = avatarColor(nm);
+    setText(el.querySelector('.ini'), nm.slice(0, 1).toUpperCase());
+    const rb = el.querySelector('.rolebadge');
+    setText(rb, badge); rb.style.display = badge ? '' : 'none';
+    setText(el.querySelector('.sname'), nm + (isMe ? ' (вы)' : ''));
+    el.classList.toggle('active', active);
+    el.classList.toggle('out', out);
+    const bub = el.querySelector('.bubble');
+    const say = g.bubbles[id] || '';
+    if (say) setText(bub, say);
+    bub.classList.toggle('show', !!say);
+    if (!isMe) {
+      const fanc = el.querySelector('.fanc');
+      const want = Math.min(g.counts[id], 9);
+      while (fanc.children.length < want) fanc.appendChild(elFromHtml('<div class="pcard back sm new"></div>'));
+      while (fanc.children.length > want) fanc.lastElementChild.remove();
+      setText(el.querySelector('.fcount'), String(g.counts[id]));
+    }
+    return el;
+  }
+
+  function renderDurak() {
+    const g = S.game;
+    const me = S.me;
+    const amHost = S.host === me;
+    const isDef = g.defender === me;
+    if (!app.querySelector('.table.durak')) buildDurak();
+    const first = !D.prev;
+    if (dSel !== null && !g.hand.some((c) => c.id === dSel)) dSel = null;
+    if (!isDef || g.taking) dSel = null;
+    // «мой ход» по роли, без намёка на то, есть ли чем ходить
+    const iAct = !g.over && (g.canTake || g.canPass || (g.table.length === 0 && g.attacker === me));
+    const myIdx = g.order.indexOf(me);
+    const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
+
+    // 1. измеряем всё «до» (вместе с идущими анимациями) и останавливаем их, чтобы замеры «после» были чистыми
+    const before = new Map();
+    const beforeHtml = new Map();
+    D.cards.forEach((el, cid) => {
+      before.set(cid, dRect(el));
+      if (el.closest('.pair')) beforeHtml.set(cid, el.cloneNode(true).outerHTML.replace(/ data-cid="\d+"| data-id="\d+"/g, ''));
+      el.getAnimations().forEach((a) => a.cancel());
+    });
+    const seatBefore = new Map();
+    D.seats.forEach((el, id) => seatBefore.set(id, dRect(el.querySelector('.avatar'))));
+    const deckBefore = dRect($('#deckbox'));
+    const discBefore = dRect($('#discardbox'));
+
+    // 2. обновляем DOM на месте
+    const getCard = (c) => {
+      let el = D.cards.get(c.id);
+      if (!el) {
+        el = pcardEl(c);
+        D.cards.set(c.id, el);
+      }
+      return el;
+    };
+    syncOrder($('#dOpps'), others.map((id) => syncSeat(id, g, false)));
+    const meSeat = syncSeat(me, g, true);
+    if (meSeat.parentNode !== $('#dMeSeat')) $('#dMeSeat').appendChild(meSeat);
+
+    const deckKey = g.deckLeft > 0 ? `full:${g.trump.id}` : `empty:${g.trumpSuit}`;
+    if (D.deckKey !== deckKey) {
+      D.deckKey = deckKey;
+      $('#deckbox').innerHTML = g.deckLeft > 0
+        ? `${pcardHtml(g.trump, 'trumpc sm')}<div class="pcard back sm stack s3"></div><div class="pcard back sm stack s2"></div><div class="pcard back sm stack s1"></div><div class="cnt"></div>`
+        : `<div class="pcard sm trumpc empty"><span class="big" style="opacity:1">${SUIT[g.trumpSuit]}</span></div>`;
+    }
+    const cnt = $('#deckbox .cnt'); if (cnt) setText(cnt, String(g.deckLeft));
+    setText($('#dTrumpLbl'), `козырь ${SUIT[g.trumpSuit]}`);
+    const discKey = g.discard > 0 ? 'pile' : 'empty';
+    if (D.discKey !== discKey) {
+      D.discKey = discKey;
+      $('#discardbox').innerHTML = g.discard > 0 ? '<div class="pcard back sm"></div><div class="pcard back sm d2"></div>' : '<div class="pcard sm ghostslot"></div>';
+    }
+    setText($('#dDiscLbl'), `бито: ${g.discard}`);
+
+    // стол: пары карт
+    const pairEls = g.table.map((p, i) => {
+      let pe = D.pairs.get(p.a.id);
+      if (!pe) { pe = document.createElement('div'); pe.className = 'pair'; D.pairs.set(p.a.id, pe); }
+      pe.dataset.att = i;
+      const a = getCard(p.a);
+      a.className = `pcard ${a.dataset.red} ${p.a.suit === g.trumpSuit ? 'trump' : ''}`;
+      if (a.parentNode !== pe) pe.prepend(a);
+      if (p.d) {
+        const d = getCard(p.d);
+        d.className = `pcard ${d.dataset.red} d ${p.d.suit === g.trumpSuit ? 'trump' : ''}`;
+        if (d.parentNode !== pe) pe.appendChild(d);
+      }
+      return pe;
+    });
+    const live = new Set(g.table.flatMap((p) => (p.d ? [p.a.id, p.d.id] : [p.a.id])));
+    for (const id of [...D.pairs.keys()]) if (!g.table.some((p) => p.a.id === id)) D.pairs.delete(id);
+    syncOrder($('#dtable'), pairEls);
+
+    // рука: отсортирована (козыри в конце), карты, ушедшие на стол, переехали в пары выше
+    // козырь всегда первым (слева), остальные масти так, чтобы красные и чёрные чередовались; внутри масти — по убыванию (старшие слева)
+    const isRed = (x) => x === 'h' || x === 'd';
+    const order = [g.trumpSuit];
+    const rest = ['h', 'c', 'd', 's'].filter((x) => x !== g.trumpSuit);
+    while (rest.length) {
+      const i = rest.findIndex((x) => isRed(x) !== isRed(order[order.length - 1]));
+      order.push(rest.splice(i >= 0 ? i : 0, 1)[0]);
+    }
+    const hand = [...g.hand].sort((x, y) => order.indexOf(x.suit) - order.indexOf(y.suit) || y.rank - x.rank);
+    const handEls = hand.map((c) => {
+      const el = getCard(c);
+      live.add(c.id);
+      const t = c.suit === g.trumpSuit ? 'trump' : '';
+      el.className = `pcard ${el.dataset.red} ${dSel === c.id ? 'sel' : ''} ${t}`;
+      return el;
+    });
+    const handBox = $('#dHand');
+    syncOrder(handBox, handEls);
+    for (const [cid, el] of [...D.cards]) if (!live.has(cid)) { D.cards.delete(cid); el.remove(); }
+    // перекрытие карт в руке подгоняем под ширину экрана
+    if (handEls.length) {
+      const cw = handEls[0].offsetWidth || 66;
+      const avail = $('#dHandWrap').clientWidth - 16;
+      const n = handEls.length;
+      handBox.style.setProperty('--ov', `${n > 1 ? Math.min(cw - 18, Math.max(10, (n * cw - avail) / (n - 1))) : 0}px`);
+    }
+
+    let status;
+    if (g.over) status = g.loser ? `🤡 Дурак — ${nameOf(g.loser)}` : '🤝 Ничья';
+    else if (g.out.includes(me)) status = 'Вы вышли из игры 🎉';
+    else if (isDef) status = g.taking ? 'Вы берёте' : 'Вы отбиваетесь';
+    else if (g.attacker === me) status = 'Вы ходите';
+    else status = `Ходит ${nameOf(g.attacker)}, защищается ${nameOf(g.defender)}`;
+    const st = $('#dStatus'); setText(st, status); st.classList.toggle('mine', iAct);
+    $('#dHandWrap').classList.toggle('active', iAct);
+    $('#dActions').innerHTML = `
+      ${dSel !== null && S.rules.transfer && isDef && !g.taking && g.table.length > 0 && g.table.every((p) => !p.d) ? '<button class="btn" id="dTransfer">↪ Перевести</button>' : ''}
+      ${g.canTake ? '<button class="btn danger" id="dTake">Беру</button>' : ''}
+      ${g.canPass ? `<button class="btn ghost" id="dPass">${me === g.attacker && !g.taking ? 'Бито' : 'Пас'}</button>` : ''}
+      ${g.over && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
+      ${g.over && !amHost ? '<span class="waitmsg">Ждём создателя…</span>' : ''}`;
+
+    // 3. замеры «после» и плавные перелёты
+    const after = new Map();
+    D.cards.forEach((el, cid) => after.set(cid, dRect(el)));
+    const seatAfter = new Map();
+    D.seats.forEach((el, id) => seatAfter.set(id, dRect(el.querySelector('.avatar'))));
+    const deckAfter = dRect($('#deckbox'));
+    const discAfter = dRect($('#discardbox'));
+    if (!REDUCED) flightsDurak({ g, first, before, beforeHtml, after, seatBefore, seatAfter, deckBefore: first ? deckAfter : deckBefore, discAfter, live });
+    D.prev = { counts: { ...g.counts }, discard: g.discard, defender: g.defender, tableCids: [...g.table.flatMap((p) => (p.d ? [p.a.id, p.d.id] : [p.a.id]))] };
+  }
+
+  function pcardEl(c) {
+    const el = elFromHtml(pcardHtml(c, '', `data-cid="${c.id}" data-id="${c.id}"`));
+    el.dataset.red = c.suit === 'h' || c.suit === 'd' ? 'red' : '';
+    return el;
+  }
+
+  function flightsDurak({ g, first, before, beforeHtml, after, seatBefore, seatAfter, deckBefore, discAfter }) {
+    const prev = D.prev;
+    const seatFrom = (id) => seatBefore.get(id) || seatAfter.get(id) || deckBefore;
     const played = [];
     if (prev) for (const id of g.order) { if (id === S.me) continue; for (let k = (prev.counts[id] || 0) - g.counts[id]; k > 0; k--) played.push(id); }
     let deal = 0;
-    app.querySelectorAll('[data-cid]').forEach((el) => {
-      const cid = el.dataset.cid;
-      const nr = now.cards.get(cid);
-      const old = prev && prev.cards.get(cid);
+    D.cards.forEach((el, cid) => {
+      const to = after.get(cid);
+      const old = before.get(cid);
       let from = null; let delay = 0;
       if (old) {
-        if (Math.abs(old.left - nr.left) < 2 && Math.abs(old.top - nr.top) < 2) return;
+        if (Math.abs(old.left - to.left) < 1 && Math.abs(old.top - to.top) < 1 && Math.abs(old.width - to.width) < 1) return;
         from = old;
-      } else if (!prev) { from = now.deck; delay = deal++ * 70; } // раздача
-      else if (el.closest('.dhand')) from = now.deck; // взял из колоды
-      else from = seatRect(played.shift() || g.attacker); // карту выложил соперник
+      } else if (first) { from = deckBefore; delay = deal++ * STAGGER_MS; }
+      else if (el.parentNode && el.parentNode.id === 'dHand') from = deckBefore;
+      else from = seatFrom(played.shift() || g.attacker);
       if (!from) return;
-      const dx = (from.left + from.width / 2) - (nr.left + nr.width / 2);
-      const dy = (from.top + from.height / 2) - (nr.top + nr.height / 2);
-      el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / nr.width})`, opacity: 0.85 }],
-        { duration: 650, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
+      const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
+      const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
+      el.style.zIndex = 60;
+      const done = () => { el.style.zIndex = ''; };
+      let a;
+      if (old) {
+        // карта уже была на экране: плавно переезжает на новое место
+        a = el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / to.width})` }],
+          { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+      } else {
+        // новая карта вылетает рубашкой вверх (из колоды или от соперника) и к концу полёта «открывается»
+        a = el.animate([
+          { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(.5) rotate(-16deg)` },
+          { opacity: 1, offset: 0.15 },
+        ], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+        const cv = document.createElement('i');
+        cv.className = 'cover';
+        el.appendChild(cv);
+        cv.animate([{ opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
+      }
+      a.onfinish = a.oncancel = done;
     });
     if (!prev) return;
-    // конец раунда: стол опустел
-    if (prev.table.length && !g.table.length) {
+    // конец раунда: карты со стола ушли в «бито» или к тому, кто взял
+    const gone = prev.tableCids.filter((cid) => !D.cards.has(cid) && beforeHtml.has(cid));
+    if (gone.length) {
       const bito = g.discard > prev.discard;
-      const target = bito ? now.discard : (prev.defender !== S.me ? seatRect(prev.defender) : null);
-      if (target) prev.table.forEach((t, i) => flyGhost(t.html, t.rect, target, i * 110));
+      const target = bito ? discAfter : (prev.defender !== S.me ? seatAfter.get(prev.defender) : null);
+      if (target) gone.forEach((cid, i) => flyGhost(beforeHtml.get(cid), before.get(cid), target, i * STAGGER_MS));
     }
     // добор из колоды соперниками
     g.order.forEach((id) => {
       if (id === S.me) return;
       let inc = g.counts[id] - (prev.counts[id] || 0);
-      if (!g.table.length && prev.table.length && !(g.discard > prev.discard) && prev.defender === id) inc -= prev.table.length;
-      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="pcard back"></div>', now.deck, seatRect(id), 400 + k * 110, 34);
+      if (!g.table.length && prev.tableCids.length && !(g.discard > prev.discard) && prev.defender === id) inc -= prev.tableCids.length;
+      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="pcard back"></div>', cardAt(deckBefore, 34), cardAt(seatAfter.get(id) || deckBefore, 34), 400 + k * STAGGER_MS);
     });
   }
-
-  function renderDurak() {
-    const g = S.game;
-    const amHost = S.host === S.me;
-    const me = S.me;
-    const isDef = g.defender === me;
-    const myIdx = g.order.indexOf(me);
-    const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
-    if (dSel !== null && !g.hand.some((c) => c.id === dSel)) dSel = null;
-    if (!isDef || g.taking) dSel = null;
-    const targets = dSel !== null && g.canDefend[dSel] ? g.canDefend[dSel] : [];
-    const handEl = app.querySelector('.dhand');
-    const scroll = handEl ? handEl.scrollLeft : 0;
-    const iAct = !g.over && (g.canTake || g.canPass || g.canAttack.length > 0 || Object.keys(g.canDefend).length > 0);
-
-    let status;
-    if (g.over) status = g.loser ? `🤡 Дурак — ${esc(nameOf(g.loser))}` : '🤝 Ничья';
-    else if (g.out.includes(me)) status = 'Вы вышли из игры 🎉';
-    else if (isDef) status = g.taking ? 'Вы берёте. Ждём, пока подкинут' : (g.canTake ? 'Отбейтесь или возьмите карты' : 'Ждём ход');
-    else if (g.table.length === 0 && g.attacker === me) status = 'Ваш ход — сходите любой картой';
-    else if (g.canPass || g.canAttack.length) status = g.taking ? 'Можно подкинуть' : 'Можно подкинуть или нажать «Бито»';
-    else status = `Ходит ${esc(nameOf(g.attacker))}, защищается ${esc(nameOf(g.defender))}`;
-
-    const cls = (c) => {
-      const t = c.suit === g.trumpSuit ? 'trump' : '';
-      if (isDef && !g.taking) return `${g.canDefend[c.id] || g.canTransfer.includes(c.id) ? 'ok' : 'no'} ${dSel === c.id ? 'sel' : ''} ${t}`;
-      return `${g.canAttack.includes(c.id) ? 'ok' : 'no'} ${t}`;
-    };
-    const seat = (id) => {
-      const n = g.counts[id];
-      const out = g.out.includes(id);
-      const badge = out ? '🏁' : id === g.defender ? '🛡' : id === g.attacker ? '⚔' : '';
-      const fan = Array.from({ length: Math.min(n, 9) }, () => '<div class="pcard back sm"></div>').join('');
-      const nm = nameOf(id);
-      const active = !g.over && !out && (g.defender === id ? g.table.some((p) => !p.d) && !g.taking : g.attacker === id && g.table.length === 0);
-      return `<div class="seat ${active ? 'active' : ''} ${out ? 'out' : ''}" data-seat="${id}">
-        ${g.bubbles[id] ? `<div class="bubble">${esc(g.bubbles[id])}</div>` : ''}
-        <div class="avatar" style="background:${avatarColor(nm)}">${esc(nm.slice(0, 1).toUpperCase())}${badge ? `<span class="rolebadge">${badge}</span>` : ''}</div>
-        <div class="sname">${esc(nm)}</div>
-        <div class="fan">${fan}<span class="fcount">${n}</span></div>
-      </div>`;
-    };
-
-    app.innerHTML = `
-      <div class="table durak">
-        <div class="opps">${others.map(seat).join('')}</div>
-        <div class="center dcenter">
-          <div class="dside">
-            <div class="deckbox" id="deckbox">
-              ${g.deckLeft > 0
-    ? `${pcardHtml(g.trump, 'trumpc sm')}<div class="pcard back sm stack s3"></div><div class="pcard back sm stack s2"></div><div class="pcard back sm stack s1"></div><div class="cnt">${g.deckLeft}</div>`
-    : `<div class="pcard sm trumpc empty"><span class="big" style="opacity:1">${SUIT[g.trumpSuit]}</span></div>`}
-            </div>
-            <span class="dlabel">козырь ${SUIT[g.trumpSuit]}</span>
-          </div>
-          <div class="dtable" id="dtable">${g.table.map((p, i) => `
-            <div class="pair ${targets.includes(i) ? 'target' : ''}" data-att="${i}">
-              ${pcardHtml(p.a, p.a.suit === g.trumpSuit ? 'trump' : '', `data-cid="${p.a.id}" data-tbl="1"`)}
-              ${p.d ? pcardHtml(p.d, 'd ' + (p.d.suit === g.trumpSuit ? 'trump' : ''), `data-cid="${p.d.id}" data-tbl="1"`) : ''}
-            </div>`).join('') || '<span class="empty-table">Стол пуст</span>'}</div>
-          <div class="dside">
-            <div class="discardbox" id="discardbox">${g.discard > 0 ? '<div class="pcard back sm"></div><div class="pcard back sm d2"></div>' : '<div class="pcard sm ghostslot"></div>'}</div>
-            <span class="dlabel">бито: ${g.discard}</span>
-          </div>
-        </div>
-        <div class="status ${iAct ? 'mine' : ''}">${status}</div>
-        <div class="dhandwrap ${iAct ? 'active' : ''}"><div class="dhand">${g.hand.map((c) => pcardHtml(c, cls(c), `data-id="${c.id}" data-cid="${c.id}"`)).join('')}</div></div>
-        <div class="mebar">
-          <div class="seat me ${iAct ? 'active' : ''}" data-seat="${me}">
-            ${g.bubbles[me] ? `<div class="bubble">${esc(g.bubbles[me])}</div>` : ''}
-            <div class="avatar" style="background:${avatarColor(nameOf(me))}">${esc(nameOf(me).slice(0, 1).toUpperCase())}${me === g.defender ? '<span class="rolebadge">🛡</span>' : me === g.attacker ? '<span class="rolebadge">⚔</span>' : ''}</div>
-            <div class="sname">${esc(nameOf(me))}</div>
-          </div>
-          <div class="actions">
-            ${dSel !== null && g.canTransfer.includes(dSel) ? '<button class="btn" id="dTransfer">↪ Перевести</button>' : ''}
-            ${g.canTake ? '<button class="btn danger" id="dTake">Беру</button>' : ''}
-            ${g.canPass ? `<button class="btn ghost" id="dPass">${g.taking ? 'Хватит' : 'Бито'}</button>` : ''}
-            ${g.over && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
-            ${g.over && !amHost ? '<span class="waitmsg">Ждём создателя…</span>' : ''}
-          </div>
-        </div>
-      </div>`;
-
-    const nh = app.querySelector('.dhand'); if (nh) nh.scrollLeft = scroll;
-
-    // раскладка после отрисовки — до запуска анимаций (во время анимации размеры «плывут»)
-    const R = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
-    const now = { cards: new Map(), seats: new Map(), deck: R($('#deckbox')), discard: R($('#discardbox')) };
-    app.querySelectorAll('[data-cid]').forEach((el) => now.cards.set(el.dataset.cid, R(el)));
-    app.querySelectorAll('[data-seat]').forEach((el) => now.seats.set(el.dataset.seat, R(el.querySelector('.avatar'))));
-    animateDurak(dLayout, now, g);
-    dLayout = {
-      cards: now.cards,
-      counts: { ...g.counts },
-      discard: g.discard,
-      defender: g.defender,
-      table: g.table.length ? [...app.querySelectorAll('[data-tbl]')].map((el) => ({ html: el.outerHTML.replace(/ data-cid="\d+"| data-tbl="1"/g, ''), rect: now.cards.get(el.dataset.cid) })) : [],
-    };
-
-    const act = (a) => emit('game:action', a);
-    app.querySelectorAll('.dhand .pcard.ok').forEach((el) => {
-      el.onclick = () => {
-        const id = Number(el.dataset.id);
-        if (isDef && !g.taking) {
-          const t = g.canDefend[id] || [];
-          const canTr = g.canTransfer.includes(id);
-          if (t.length === 1 && !canTr) { dSel = null; return act({ type: 'defend', attackId: t[0], cardId: id }); }
-          dSel = dSel === id ? null : id; renderDurak();
-        } else act({ type: 'attack', cardId: id });
-      };
-    });
-    app.querySelectorAll('.pair.target').forEach((el) => {
-      el.onclick = () => { const id = dSel; dSel = null; act({ type: 'defend', attackId: Number(el.dataset.att), cardId: id }); };
-    });
-    const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-    bind('#dTake', () => act({ type: 'take' }));
-    bind('#dPass', () => act({ type: 'pass' }));
-    bind('#dTransfer', () => { const id = dSel; dSel = null; act({ type: 'transfer', cardId: id }); });
-    bind('#again', () => emit('room:lobby'));
-  }
-
 
   // ---------- мафия ----------
   let mSel = null; // выбранная ночью цель (для необратимых действий)
