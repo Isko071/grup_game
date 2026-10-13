@@ -185,13 +185,16 @@
   // ---------- рендер ----------
   function render() {
     document.body.classList.toggle('ingame', !!S && S.phase !== 'lobby');
+    document.body.classList.toggle('inroom', !!S);
+    $('#exitBtn').hidden = !S;
     if (!S) return renderHome();
-    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dLayout = null; dSel = null; mSel = null; return renderLobby(); }
+    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dLayout = null; dSel = null; mSel = null; uLayout = null; return renderLobby(); }
     renderGame();
   }
 
   function renderHome() {
-    document.body.classList.remove('ingame');
+    document.body.classList.remove('ingame', 'inroom');
+    $('#exitBtn').hidden = true;
     const code = urlCode();
     app.innerHTML = `
       <div class="hero card-box">
@@ -264,7 +267,7 @@
     app.querySelectorAll('[data-sel]').forEach((el) => (el.onchange = () => emit('room:settings', { rules: { [el.dataset.sel]: el.value } })));
     const ab = $('#addBot'); if (ab) ab.onclick = () => emit('room:addBot');
     const st = $('#start'); if (st) st.onclick = () => emit('room:start');
-    $('#leave').onclick = leave;
+    $('#leave').onclick = askLeave;
     $('#copy').onclick = () => (navigator.clipboard ? navigator.clipboard.writeText(link).then(() => toast('Ссылка скопирована')) : ($('#linkIn').select(), toast('Скопируйте ссылку вручную')));
   }
 
@@ -584,72 +587,120 @@
     bind('#mUnvote', () => act({ type: 'vote', target: null }));
     bind('#mEndNight', () => act({ type: 'endNight' }));
     bind('#mEndDay', () => act({ type: 'endDay' }));
-    bind('#mEnd', () => { if (confirm('Завершить игру и раскрыть роли?')) act({ type: 'endGame' }); });
+    bind('#mEnd', async () => { if (await confirmBox({ title: 'Завершить игру?', text: 'Игра закончится, все роли раскроются.', ok: 'Завершить', cancel: 'Продолжить' })) act({ type: 'endGame' }); });
     bind('#again', () => emit('room:lobby'));
+  }
+
+  // ---------- УНО (стиль мобильной версии) ----------
+  let uLayout = null; // раскладка прошлого рендера — для анимации полёта карт
+  const MEDAL = ['🥇', '🥈', '🥉'];
+
+  function seatPos(i, k) {
+    const t = (i + 1) / (k + 1);
+    const phi = Math.PI * (1 - t);
+    const deg = (phi * 180) / Math.PI;
+    return { x: 50 + 41 * Math.cos(phi), y: 31 - 18 * Math.sin(phi), rot: (90 - deg) * 0.8 };
   }
 
   function renderUno() {
     const g = S.game;
-    const amHost = S.host === S.me;
-    const myTurn = g.turn === S.me && !g.winner;
-    // порядок хода относительно меня
-    const myIdx = g.order.indexOf(S.me);
-    const ordered = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== S.me);
-    const handEl = app.querySelector('.hand');
-    const scroll = handEl ? handEl.scrollLeft : 0;
-    const newTop = prevTopId !== g.top.id;
-    prevTopId = g.top.id;
+    const me = S.me;
+    const amHost = S.host === me;
+    const myOut = g.out[me];
+    const myTurn = g.turn === me && !g.over && !myOut;
+    const myIdx = g.order.indexOf(me);
+    const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
+    const dense = others.length > 5;
+    const ch = g.challenge;
+    const meCh = ch && ch.target === me && myTurn;
+    const place = (id) => { const p = g.places ? g.places.indexOf(id) : g.finished.indexOf(id); return p >= 0 && (g.out[id] === 'finished' || g.places) ? p : -1; };
+    const placeBadge = (id) => { const p = place(id); return p >= 0 && g.out[id] !== 'left' ? (MEDAL[p] ? `<span class="uplace">${MEDAL[p]}</span>` : `<span class="uplace num">${p + 1}</span>`) : (g.out[id] === 'left' ? '<span class="uplace">🚪</span>' : ''); };
 
     let status;
-    if (g.winner) status = `🏆 ${esc(nameOf(g.winner))} выиграл!`;
-    else if (myTurn) status = g.drawn !== null ? 'Сыграйте взятую карту или пасуйте' : (g.pending ? `Положите ${g.pendingType} или возьмите ${g.pending}` : 'Ваш ход');
-    else status = `Ходит ${esc(nameOf(g.turn))}`;
+    if (g.over) status = 'Партия окончена';
+    else if (myOut === 'finished') status = `Вы выиграли! Место ${g.finished.indexOf(me) + 1}. Смотрите дальше`;
+    else if (meCh) status = `Оспорить «+4» ${nameOf(ch.by)}?`;
+    else if (myTurn && g.drawn !== null) status = 'Сыграйте взятую карту или пасуйте';
+    else if (myTurn && g.pending) status = `Положите плюс или возьмите ${g.pending}`;
+    else if (myTurn) status = 'Ваш ход';
+    else status = `Ходит ${nameOf(g.turn)}`;
+
+    const seat = (id, i) => {
+      const n = g.counts[id];
+      const p = seatPos(i, others.length);
+      const nm = nameOf(id);
+      const turn = g.turn === id && !g.over && !g.out[id];
+      const m = Math.min(n, 9);
+      const fan = dense ? '' : Array.from({ length: m }, (_, j) => `<i class="card back mini" style="transform:rotate(${(j - (m - 1) / 2) * 7}deg)"></i>`).join('');
+      return `<div class="useat ${turn ? 'turn' : ''} ${g.out[id] ? 'out' : ''} ${dense ? 'dense' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${id}">
+        <div class="uname">${esc(nm)}</div>
+        <div class="uav ${turn ? 'ring' : ''}" style="background:${avatarColor(nm)}">${esc(nm.slice(0, 1).toUpperCase())}<b class="ucount ${g.called[id] && n === 1 ? 'uno' : ''}">${n}</b>${placeBadge(id)}</div>
+        <div class="ufan" style="transform:rotate(${p.rot}deg)">${fan}</div>
+      </div>`;
+    };
+
+    // рука: веер карт, помещающийся в ширину экрана
+    const n = g.hand.length;
+    const cw = innerWidth < 420 ? 62 : 72;
+    const step = Math.min(3.2, 22 / Math.max(n, 1));
+    const edge = cw * 1.5 * 1.3 * Math.sin((((n - 1) / 2) * step * Math.PI) / 180) + cw * 0.12; // на сколько веер выступает по краям
+    const avail = Math.min(app.clientWidth || innerWidth, 620) - 16 - 2 * edge;
+    const ov = n > 1 ? Math.min(cw - 18, Math.max(10, (n * cw - avail) / (n - 1))) : 0;
+    const handHtml = g.hand.map((c, i) => {
+      const off = i - (n - 1) / 2;
+      const ok = g.playable.includes(c.id);
+      return cardHtml(c, `${ok ? 'ok' : (myTurn ? 'no' : '')}`, `data-id="${c.id}" data-cid="${c.id}" style="--w:${cw}px;--rot:${(off * step).toFixed(1)}deg;--ty:${(off * off * 0.9).toFixed(1)}px;margin-left:${i ? -ov : 0}px"`);
+    }).join('');
+
+    const recent = g.recent.slice(0, -1).map((c) => `<div class="udeco" style="--r:${((c.id * 37) % 50) - 25}deg;--dx:${((c.id * 13) % 24) - 12}px">${cardHtml(c, '', 'style="--w:64px"')}</div>`).join('');
+    const myName = nameOf(me);
+    const resultHtml = g.over ? `
+      <div class="uresult"><h3>🏁 Итоги</h3>
+        <ol>${(g.places || []).map((id, i) => `<li class="${id === me ? 'me' : ''}"><span>${MEDAL[i] || (i + 1) + '.'}</span> ${esc(nameOf(id))}${g.out[id] === 'left' ? ' <small>(вышел)</small>' : g.out[id] === 'finished' ? '' : ` <small>(карт: ${g.counts[id]})</small>`}</li>`).join('')}</ol>
+        ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём хоста…</span>'}
+      </div>` : '';
 
     app.innerHTML = `
-      <div class="table">
-        <div class="opps">${ordered.map((id) => `
-          <div class="opp ${g.turn === id && !g.winner ? 'turn' : ''}">
-            ${g.called[id] && g.counts[id] === 1 ? '<span class="uno">УНО!</span>' : ''}
-            <div class="n">${esc(nameOf(id))}</div>
-            <div class="c">🂠 ${g.counts[id]}</div>
-            ${g.catchable === id ? `<button class="catch" data-catch="1">Поймать!</button>` : ''}
-          </div>`).join('')}</div>
-        <div class="center">
-          <div class="pile">
-            <div class="draw-btn ${myTurn && g.drawn === null ? 'can' : ''}" id="drawPile">${backHtml()}</div>
-            <span>колода · ${g.drawLeft}</span>
+      <div class="table uno ${g.dir === 1 ? 'cw' : 'ccw'}">
+        <div class="rays"></div>
+        <div class="orbit"><span>${g.dir === 1 ? '↻' : '↺'}</span></div>
+        ${others.map(seat).join('')}
+        <div class="ucenter">
+          <div class="upile ${myTurn && g.drawn === null && !meCh ? 'can' : ''}" id="drawPile">
+            <div class="card back" style="--w:62px"></div><b class="pcnt">${g.drawLeft}</b>
           </div>
-          <div class="pile">
-            ${cardHtml(g.top, newTop ? 'pop' : '')}
-            <span>сброс</span>
-          </div>
-          <div class="pile">
-            <div class="colorring" style="background:${COLOR_CSS[g.color]}" title="${COLOR_RU[g.color]}"></div>
-            <span class="dirbadge">${g.dir === 1 ? '↻' : '↺'}</span>
-            ${g.pending ? `<span class="pending">+${g.pending}</span>` : ''}
-          </div>
+          <div class="udisc c-${g.color}" id="discard">${recent}<div class="utop">${cardHtml(g.top, 'top', `data-cid="${g.top.id}" style="--w:76px"`)}</div></div>
+          ${g.pending ? `<div class="upend">+${g.pending}</div>` : ''}
         </div>
-        ${S.timeLeft != null ? '<div class="timer" id="timer"><i></i></div><div class="timer-txt" id="timerTxt"></div>' : ''}
-        <div class="status">${status}</div>
-        <div class="log">${esc(g.log[g.log.length - 1] || '')}</div>
-        <div class="hand">${g.hand.map((c) => {
-          const ok = g.playable.includes(c.id);
-          const fresh = !seenCards.has(c.id);
-          seenCards.add(c.id);
-          return cardHtml(c, `${ok ? 'ok' : (myTurn ? 'no' : '')} ${fresh ? 'deal' : ''}`, `data-id="${c.id}"`);
-        }).join('')}</div>
-        <div class="actions">
-          ${g.hand.length <= 2 && !g.winner && !g.called[S.me] ? '<button class="btn" id="unoBtn">УНО!</button>' : ''}
-          ${g.canPass ? '<button class="btn ghost" id="passBtn">Пас</button>' : ''}
-          ${g.winner && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
-          ${g.winner && !amHost ? '<span style="color:#fff">Ждём хоста…</span>' : ''}
+        ${ch ? `<div class="cbanner"><span>${meCh ? `«+4» от ${esc(nameOf(ch.by))}` : `${esc(nameOf(ch.target))} решает: оспорить «+4»?`}</span>
+          ${meCh ? `<button class="btn red" id="uChal">Оспорить</button><button class="btn blue" id="uAcc">Принять +${g.pending}</button>` : ''}</div>` : ''}
+        <div class="ustatus ${myTurn ? 'mine' : ''}">${esc(status)}<span id="uTimerTxt"></span></div>
+        <div class="ustrip">
+          <div class="mebox ${myTurn ? 'turn' : ''} ${myOut ? 'out' : ''}" data-seat="${me}">
+            <div class="uav ${myTurn ? 'ring' : ''}" style="background:${avatarColor(myName)}">${esc(myName.slice(0, 1).toUpperCase())}<b class="ucount">${n}</b>${placeBadge(me)}</div>
+            <div class="uname">${esc(myName)}</div>
+          </div>
+          <div class="uactions">
+            ${g.canPass ? '<button class="btn ghost small" id="uPass">Пас</button>' : ''}
+            ${g.canFinish ? '<button class="btn ghost small" id="uFinish">Закончить игру</button>' : ''}
+          </div>
+          ${!g.over && !myOut ? '<button class="unobtn" id="uUno" aria-label="УНО"><span>UNO!</span></button>' : '<span></span>'}
         </div>
+        <div class="uhand ${myOut ? 'out' : ''}">${handHtml}</div>
+        ${resultHtml}
       </div>`;
 
-    startTimer();
-    const nh = app.querySelector('.hand'); if (nh) nh.scrollLeft = scroll;
+    // раскладка после отрисовки — до запуска анимаций
+    const R = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+    const now = { cards: new Map(), seats: new Map(), pile: R($('#drawPile .card')), disc: R($('#discard')) };
+    app.querySelectorAll('[data-cid]').forEach((el) => now.cards.set(el.dataset.cid, R(el)));
+    app.querySelectorAll('[data-seat] .uav').forEach((el) => now.seats.set(el.parentElement.dataset.seat, R(el)));
+    animateUno(uLayout, now, g);
+    uLayout = { cards: now.cards, counts: { ...g.counts }, turn: g.turn };
+    startUnoTimer();
+
     const act = (a) => emit('game:action', a);
-    app.querySelectorAll('.hand .card.ok').forEach((el) => {
+    app.querySelectorAll('.uhand .card.ok').forEach((el) => {
       el.onclick = () => {
         const id = Number(el.dataset.id);
         const card = g.hand.find((c) => c.id === id);
@@ -657,40 +708,104 @@
         else act({ type: 'play', cardId: id });
       };
     });
-    $('#drawPile').onclick = () => { if (myTurn && g.drawn === null) act({ type: 'draw' }); };
-    app.querySelectorAll('[data-catch]').forEach((b) => (b.onclick = () => act({ type: 'catch' })));
-    const u = $('#unoBtn'); if (u) u.onclick = () => act({ type: 'uno' });
-    const p = $('#passBtn'); if (p) p.onclick = () => act({ type: 'pass' });
-    const a = $('#again'); if (a) a.onclick = () => emit('room:lobby');
+    const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    bind('#drawPile', () => { if (myTurn && g.drawn === null && !meCh) act({ type: 'draw' }); else if (meCh) act({ type: 'draw' }); });
+    bind('#uUno', () => act({ type: 'uno' }));
+    bind('#uPass', () => act({ type: 'pass' }));
+    bind('#uChal', () => act({ type: 'challenge' }));
+    bind('#uAcc', () => act({ type: 'draw' }));
+    bind('#uFinish', async () => { if (await confirmBox({ title: 'Закончить игру?', text: 'Партия завершится сейчас, места распределятся по текущему положению.', ok: 'Закончить', cancel: 'Продолжить' })) act({ type: 'finish' }); });
+    bind('#again', () => emit('room:lobby'));
   }
 
-  // обратный отсчёт хода: S.timeLeft приходит с сервера в момент рассылки
-  let timerRaf = null;
-  function startTimer() {
-    cancelAnimationFrame(timerRaf);
-    const bar = $('#timer');
-    if (!bar || S.timeLeft == null) return;
+  // Полёт карт: из руки на стол, от соперника в центр, из колоды в руку/к сопернику
+  function animateUno(prev, now, g) {
+    if (REDUCED) return;
+    const seatRect = (id) => now.seats.get(id) || now.pile;
+    const played = [];
+    if (prev) for (const id of g.order) { if (id === S.me) continue; for (let k = (prev.counts[id] || 0) - g.counts[id]; k > 0; k--) played.push(id); }
+    let deal = 0;
+    app.querySelectorAll('[data-cid]').forEach((el) => {
+      const nr = now.cards.get(el.dataset.cid);
+      const old = prev && prev.cards.get(el.dataset.cid);
+      let from = null; let delay = 0;
+      if (old) { if (Math.abs(old.left - nr.left) < 2 && Math.abs(old.top - nr.top) < 2) return; from = old; }
+      else if (!prev) { from = now.pile; delay = deal++ * 60; }
+      else if (el.closest('.uhand')) from = now.pile;
+      else from = seatRect(played.shift() || (prev && g.order[(g.order.indexOf(g.turn) + g.order.length - g.dir) % g.order.length]));
+      if (!from) return;
+      const dx = (from.left + from.width / 2) - (nr.left + nr.width / 2);
+      const dy = (from.top + from.height / 2) - (nr.top + nr.height / 2);
+      el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / nr.width})`, opacity: 0.85 }],
+        { duration: 420, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
+    });
+    if (!prev) return;
+    g.order.forEach((id) => {
+      if (id === S.me) return;
+      const inc = g.counts[id] - (prev.counts[id] || 0);
+      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="card back"></div>', now.pile, seatRect(id), 150 + k * 70, 30);
+    });
+  }
+
+  // кольцо-таймер вокруг аватара того, чей ход, и секунды в статусе
+  let uTimerRaf = null;
+  function startUnoTimer() {
+    cancelAnimationFrame(uTimerRaf);
+    if (S.timeLeft == null || !S.game || S.game.over) return;
+    const av = app.querySelector('.useat.turn .uav') || app.querySelector('.mebox.turn .uav');
+    if (!av) return;
     const t0 = performance.now(); const left = S.timeLeft; const total = S.timerTotal || left || 1;
+    const mine = S.game.turn === S.me;
     const tick = () => {
       const rem = Math.max(0, left - (performance.now() - t0));
-      bar.firstElementChild.style.transform = `scaleX(${rem / total})`;
-      bar.classList.toggle('low', rem < 6000);
-      const txt = $('#timerTxt'); if (txt) txt.textContent = S.game && S.game.turn === S.me ? `Ваш ход: ${Math.ceil(rem / 1000)} с` : '';
-      if (rem > 0 && $('#timer') === bar) timerRaf = requestAnimationFrame(tick);
+      av.style.setProperty('--p', (rem / total) * 100);
+      av.classList.toggle('low', rem < 6000);
+      const txt = $('#uTimerTxt'); if (txt) txt.textContent = mine ? ` · ${Math.ceil(rem / 1000)} с` : '';
+      if (rem > 0 && app.contains(av)) uTimerRaf = requestAnimationFrame(tick);
     };
     tick();
   }
 
+  // выбор цвета «кубиками» вокруг стола
   function pickColor(cb) {
     const m = document.createElement('div');
-    m.className = 'modal';
-    m.innerHTML = `<div class="box"><b>Выберите цвет</b><div class="colors">${['r', 'y', 'g', 'b'].map((c) => `<button style="background:${COLOR_CSS[c]}" data-c="${c}" aria-label="${COLOR_RU[c]}"></button>`).join('')}</div></div>`;
+    m.className = 'modal cubes';
+    m.innerHTML = `<div class="cubebox"><b>Выберите цвет</b>
+      ${[['g', 'top'], ['b', 'left'], ['y', 'right'], ['r', 'bottom']].map(([c, pos]) => `<button class="cube ${pos}" style="--cc:${COLOR_CSS[c]}" data-c="${c}" aria-label="${COLOR_RU[c]}"></button>`).join('')}</div>`;
     m.onclick = (e) => {
       const b = e.target.closest('button');
       if (b) { cb(b.dataset.c); m.remove(); } else if (e.target === m) m.remove();
     };
     document.body.appendChild(m);
   }
+
+  // окно подтверждения (выход, завершение игры)
+  function confirmBox({ title, text, ok = 'Выйти', cancel = 'Остаться' }) {
+    return new Promise((res) => {
+      const m = document.createElement('div');
+      m.className = 'modal';
+      m.innerHTML = `<div class="box confirm"><b>${esc(title)}</b><p>${esc(text)}</p>
+        <div class="row"><button class="btn ghost" data-r="0">${esc(cancel)}</button><button class="btn danger" data-r="1">${esc(ok)}</button></div></div>`;
+      m.onclick = (e) => {
+        const b = e.target.closest('button');
+        if (b) { m.remove(); res(b.dataset.r === '1'); } else if (e.target === m) { m.remove(); res(false); }
+      };
+      document.body.appendChild(m);
+    });
+  }
+
+  async function askLeave() {
+    if (!S) return;
+    let title = 'Выйти из комнаты?'; let text = 'Вы покинете комнату. Вернуться можно по ссылке или коду.';
+    if (S.phase === 'playing') {
+      title = 'Выйти из игры?';
+      text = S.gameId === 'uno' ? 'Ваши карты вернутся в колоду. Вернуться в эту партию будет нельзя.'
+        : (S.gameId === 'mafia' && S.rules.mode === 'live') ? 'Партия продолжится без вас. Вернуться в неё будет нельзя.'
+          : 'Вместо вас продолжит играть бот. Вернуться в эту партию будет нельзя.';
+    }
+    if (await confirmBox({ title, text })) leave();
+  }
+  $('#exitBtn').onclick = askLeave;
 
   // старт
   renderHome();

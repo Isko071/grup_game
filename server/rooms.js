@@ -97,6 +97,7 @@ class Room {
     if (!g) return 'Игра недоступна';
     if (this.players.length < g.meta.minPlayers) return `Нужно минимум ${g.meta.minPlayers} игрока`;
     if (this.players.length > g.meta.maxPlayers) return `Максимум ${g.meta.maxPlayers} игроков`;
+    if (!g.meta.supportsBots && this.players.some((p) => p.bot)) return 'В этой игре нет ботов — уберите их из комнаты';
     const bad = g.validate && g.validate(this.players, { ...g.meta.defaultRules, ...this.rules });
     if (bad) return bad;
     this.game = g.create(this.players, this.rules, undefined, { hostId: this.hostId });
@@ -174,6 +175,27 @@ class Room {
     this.botTimer.unref?.();
   }
 
+  // Игрок вышел посреди игры: игры без ботов убирают его из партии, остальные отдают его место боту
+  leaveInGame(id) {
+    const p = this.byId(id);
+    if (!p || p.bot) return;
+    const g = registry.games[this.gameId];
+    if (g.removePlayer && this.game) {
+      g.removePlayer(this.game, id);
+      p.left = true; p.token = null;
+      this.markDisconnected(id);
+      this.afterMove();
+    } else if (g.meta.supportsBots) {
+      p.bot = true; p.token = null; p.connected = true; p.socketId = null;
+      p.name = `${p.name} 🤖`;
+      if (this.hostId === id) this.reassignHost();
+      if (this.connectedHumans.length === 0) this.startEmptyTimer();
+      this.afterMove();
+    } else {
+      this.markDisconnected(id);
+    }
+  }
+
   backToLobby() {
     clearTimeout(this.botTimer);
     this.clearTurnTimer();
@@ -195,7 +217,7 @@ class Room {
       rules: { ...g.meta.defaultRules, ...this.rules },
       games: registry.list(),
       soon: registry.soon,
-      players: this.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, connected: p.connected })),
+      players: this.players.map((p) => ({ id: p.id, name: p.name, bot: p.bot, connected: p.connected, left: !!p.left })),
       chat: this.chat.filter((m) => !m.to || m.to.includes(pid)).slice(-40),
       chatChannel: (this.chatPolicyFor(pid) || {}).channel || null,
       game: this.game && this.phase !== 'lobby' ? g.view(this.game, pid, { host: this.hostId }) : null,

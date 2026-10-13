@@ -82,7 +82,11 @@ io.on('connection', (socket) => {
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     if (p.gameId) {
       if (!registry.games[p.gameId]) return ack({ error: 'Игра недоступна' });
-      if (p.gameId !== room.gameId) { room.gameId = p.gameId; room.rules = {}; }
+      if (p.gameId !== room.gameId) {
+        room.gameId = p.gameId; room.rules = {};
+        // в играх без ботов боты из комнаты убираются
+        if (!registry.games[p.gameId].meta.supportsBots) room.players = room.players.filter((x) => !x.bot);
+      }
     }
     if (p.rules && typeof p.rules === 'object') {
       const schema = registry.games[room.gameId].meta.rulesSchema;
@@ -161,12 +165,13 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:leave', guard((_p, ack) => {
-    const r = room, id = me.id;
+    const r = room, id = me.id, name = me.name;
     socket.leave(r.code);
     room = null; me = null;
     if (r.phase === 'lobby') r.removePlayer(id);
+    else if (r.phase === 'playing') r.leaveInGame(id);
     else r.markDisconnected(id);
-    r.pushChat(null, 'Игрок вышел');
+    r.pushChat(null, `${name} вышел`);
     r.touch();
     r.broadcast();
     ack({ ok: true });
