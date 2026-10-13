@@ -257,3 +257,58 @@ test('случайные партии доигрываются до конца �
     }
   }
 });
+
+test('боты УНО: на двух картах жмут «УНО!», ловят забывших и доигрывают партию', () => {
+  assert.strictEqual(uno.meta.supportsBots, true);
+  const st = fresh();
+  st.hands.p1 = [card(1, 'r', '1'), card(2, 'r', '2')];
+  assert.deepStrictEqual(uno.botMove(st, 'p1'), { type: 'uno' });
+  for (const rules of [{ stack: 'all', drawMode: 'until' }, { stack: 'same', drawMode: 'one' }, { stack: 'off', drawMode: 'one' }]) {
+    for (let g = 0; g < 15; g++) {
+      const g1 = uno.create(P(2 + (g % 7)), rules);
+      let guard = 0;
+      while (!g1.over && guard++ < 6000) {
+        let moved = false;
+        for (const id of g1.order) {
+          const a = uno.botMove(g1, id);
+          if (a) { const r = uno.act(g1, id, a); assert.ok(!r.error, JSON.stringify(a) + ' ' + r.error); moved = true; break; }
+        }
+        assert.ok(moved, 'ни у кого нет хода');
+      }
+      assert.ok(g1.over, 'партия с ботами не завершилась');
+    }
+  }
+});
+
+test('бот УНО: ловит забывших, бережёт дикие, бьёт по тому, у кого мало карт', () => {
+  // забывший одну карту ловится (при «везучем» rnd)
+  const c1 = fresh();
+  c1.rnd = () => 0;
+  c1.hands.p0 = [card(1, 'r', '1'), card(2, 'r', '2')];
+  uno.act(c1, 'p0', { type: 'play', cardId: 1 });
+  assert.deepStrictEqual(uno.botMove(c1, 'p2'), { type: 'uno' });
+
+  // рука большая, следующему далеко до победы: цветную карту, а не дикую
+  const k = fresh(3);
+  k.turn = 1;
+  k.hands.p1 = [card(1, 'w', 'wild'), card(2, 'r', '3'), card(3, 'g', '1'), card(4, 'g', '2'), card(5, 'b', '4')];
+  const m1 = uno.botMove(k, 'p1');
+  assert.strictEqual(m1.type, 'play');
+  assert.strictEqual(m1.cardId, 2);
+
+  // у следующего одна карта: бот бьёт «+2», хотя есть обычная карта
+  const th = fresh(3);
+  th.turn = 1;
+  th.hands.p2 = [card(9, 'g', '5')];
+  th.called.p2 = true;
+  th.hands.p1 = [card(1, 'r', '+2'), card(2, 'r', '7'), card(3, 'r', '8'), card(4, 'b', '1'), card(5, 'b', '2')];
+  assert.strictEqual(uno.botMove(th, 'p1').cardId, 1);
+
+  // цвет «дикой»: тот, которого больше в оставшейся руке
+  const w = fresh(3);
+  w.turn = 1;
+  w.hands.p1 = [card(1, 'w', 'wild'), card(2, 'y', '1'), card(3, 'y', '2'), card(4, 'y', '3'), card(5, 'g', '4'), card(6, 'g', '5')];
+  w.color = 'b'; w.discard = [card(900, 'b', '5')]; // обычных карт не подходит, дикая — единственный ход
+  const mw = uno.botMove(w, 'p1');
+  assert.deepStrictEqual([mw.type, mw.color], ['play', 'y']);
+});

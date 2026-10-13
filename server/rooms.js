@@ -3,6 +3,10 @@ const crypto = require('crypto');
 const registry = require('./games');
 
 const ROOM_TTL_MS = 20 * 60 * 1000; // пустая комната живёт 20 минут
+// На телефоне соединение рвётся, стоит свернуть вкладку (например, чтобы отправить ссылку друзьям),
+// поэтому место и роль хоста держим за отключившимся, а не отдаём сразу.
+const LOBBY_GRACE_MS = Number(process.env.LOBBY_GRACE_MS) || 3 * 60 * 1000; // сколько держим место в лобби
+const HOST_GRACE_MS = Number(process.env.HOST_GRACE_MS) || 90 * 1000; // через сколько хост передаётся другому
 const BOT_DELAY_MS = 900;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_CHAT = 100;
@@ -71,13 +75,19 @@ class Room {
     p.connected = false;
     p.socketId = null;
     if (this.phase === 'lobby') {
-      // в лобби место освобождается после короткой паузы (перезагрузка страницы)
+      // в лобби место освобождается после паузы: игрок мог просто свернуть вкладку или перезагрузить страницу
       setTimeout(() => {
         const q = this.byId(id);
         if (q && !q.connected && this.phase === 'lobby') { this.removePlayer(id); this.touch(); this.broadcast(); }
-      }, 15000).unref?.();
+      }, LOBBY_GRACE_MS).unref?.();
     }
-    if (this.hostId === id) this.reassignHost();
+    if (this.hostId === id) {
+      // хост передаётся, только если он не вернулся за отведённое время
+      setTimeout(() => {
+        const q = this.byId(id);
+        if (this.hostId === id && q && !q.connected && this.connectedHumans.length > 0) { this.reassignHost(); this.broadcast(); }
+      }, HOST_GRACE_MS).unref?.();
+    }
     if (this.connectedHumans.length === 0) this.startEmptyTimer();
   }
 

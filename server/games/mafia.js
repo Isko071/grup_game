@@ -18,7 +18,7 @@ const meta = {
   title: 'Мафия',
   minPlayers: 5,
   maxPlayers: 15,
-  supportsBots: true,
+  supportsBots: false,
   defaultRules: { mode: 'online', maniac: true },
   rulesSchema: [
     {
@@ -287,23 +287,27 @@ function chatPolicy(st, pid) {
   return { channel: 'all' };
 }
 
-function pick(arr, rnd) { return arr[Math.floor(rnd() * arr.length)]; }
-
-// Бот: ночью выбирает случайную цель, днём голосует (мафия — не за своих)
-function botMove(st, pid) {
-  if (st.mode === 'live' || st.phase === 'over' || !st.alive[pid]) return null;
-  if (st.phase === 'night') {
-    if (!NIGHT_KIND[st.roles[pid]] || st.night.done[pid]) return null;
-    const t = nightTargets(st, pid);
-    return t.length ? { type: 'night', target: pick(t, st.rnd) } : null;
+// Игрок вышел из партии: считается выбывшим (роль раскрывается), фазы не зависают
+function removePlayer(st, pid) {
+  if (st.phase === 'over') return;
+  if (st.mode === 'live' && pid === st.hostId) {
+    st.phase = 'over';
+    say(st, 'Ведущий вышел — игра окончена');
+    return;
   }
-  if (pid in st.votes) return null;
-  const pool = aliveIds(st).filter((id) => id !== pid && !(isMafia(st, pid) && isMafia(st, id)));
-  return pool.length ? { type: 'vote', target: pick(pool, st.rnd) } : { type: 'vote', target: null };
+  if (!st.alive[pid]) return;
+  st.alive[pid] = false;
+  delete st.night.votes[pid];
+  delete st.night.done[pid];
+  delete st.votes[pid];
+  say(st, `${nm(st, pid)} (${ROLES[st.roles[pid]].title}) вышел из игры`);
+  if (st.mode === 'live') return; // живой ведущий сам следит за ходом игры
+  if (checkWin(st)) return;
+  if (st.phase === 'night' && nightComplete(st)) resolveNight(st);
 }
 
 module.exports = {
-  meta, create, act, view, botMove, validate, chatPolicy,
+  meta, create, act, view, validate, chatPolicy, removePlayer,
   isOver: (st) => st.phase === 'over',
   _internal: { checkWin, nightTargets, ROLES },
 };

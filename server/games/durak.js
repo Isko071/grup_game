@@ -304,8 +304,36 @@ function view(st, pid) {
 }
 
 const rankSort = (st) => (a, b) => (isTrump(st, a) - isTrump(st, b)) || a.rank - b.rank;
+const cardCost = (st, c) => (isTrump(st, c) ? 100 : 0) + c.rank; // чем «дороже» карта, тем жальче её тратить
 
-// Простой бот: отбивается младшей подходящей картой, подкидывает только некозыри, иначе берёт/пасует.
+// Лучший способ отбить все карты на столе: перебор с минимальной суммарной «ценой» (null — отбить нечем)
+function bestCover(st, und, hand) {
+  const items = und
+    .map((u) => ({ ...u, n: hand.filter((c) => beats(st, u.p.a, c)).length }))
+    .sort((x, y) => x.n - y.n);
+  let best = null;
+  const used = new Set();
+  const cur = [];
+  (function dfs(k, total) {
+    if (best && total >= best.cost) return;
+    if (k === items.length) { best = { pairs: [...cur], cost: total }; return; }
+    const it = items[k];
+    const opts = hand.filter((c) => !used.has(c.id) && beats(st, it.p.a, c)).sort((a, b) => cardCost(st, a) - cardCost(st, b));
+    for (const c of opts) {
+      used.add(c.id); cur.push({ i: it.i, card: c });
+      dfs(k + 1, total + cardCost(st, c));
+      cur.pop(); used.delete(c.id);
+    }
+  }(0, 0));
+  return best;
+}
+
+// Бот. Видит только то, что видит игрок.
+//  - отбивается так, чтобы потратить как можно меньше (и не отдать нужную карту другой атаке);
+//  - не тратит старшие козыри на мелочь, пока колода большая: лучше взять;
+//  - ходит младшими некозырями, предпочитая достоинства, которые есть парой (потом можно подкинуть);
+//  - при «беру» у защитника сбрасывает ему любые некозыри, а в конце игры и козыри;
+//  - переводит некозырной картой, когда можно.
 function botMove(st, pid) {
   if (st.over) return null;
   const hand = st.hands[pid];
@@ -317,18 +345,28 @@ function botMove(st, pid) {
     if (!und.length) return null;
     const tr = [...hand].sort(rankSort(st)).find((c) => !isTrump(st, c) && canTransferCard(st, pid, c));
     if (tr) return { type: 'transfer', cardId: tr.id };
-    if (und.some((u) => !hand.some((c) => beats(st, u.p.a, c)))) return { type: 'take' };
-    const opts = hand.filter((c) => beats(st, und[0].p.a, c)).sort(rankSort(st));
-    return { type: 'defend', attackId: und[0].i, cardId: opts[0].id };
+    const cover = bestCover(st, und, hand);
+    if (!cover) return { type: 'take' };
+    const burned = cover.pairs.filter((x) => isTrump(st, x.card));
+    const cheapAttack = und.every((u) => !isTrump(st, u.p.a) && u.p.a.rank <= 9);
+    if (burned.length && st.deck.length >= 8 && cheapAttack && burned.some((x) => x.card.rank >= 11)) return { type: 'take' };
+    return { type: 'defend', attackId: cover.pairs[0].i, cardId: cover.pairs[0].card.id };
   }
 
   if (st.table.length === 0) {
     if (pid !== st.attacker) return null;
-    const c = [...hand].sort(rankSort(st))[0];
-    return { type: 'attack', cardId: c.id };
+    const sorted = [...hand].sort(rankSort(st));
+    const pool = sorted.some((c) => !isTrump(st, c)) ? sorted.filter((c) => !isTrump(st, c)) : sorted;
+    const cnt = {};
+    for (const c of hand) cnt[c.rank] = (cnt[c.rank] || 0) + 1;
+    const lead = pool.reduce((m, c) => (c.rank - (cnt[c.rank] > 1 ? 2 : 0) < m.rank - (cnt[m.rank] > 1 ? 2 : 0) ? c : m), pool[0]);
+    return { type: 'attack', cardId: lead.id };
   }
+
   if (!throwerIds(st).includes(pid) || !(st.taking || allCovered(st)) || st.passed[pid]) return null;
-  const c = [...hand].sort(rankSort(st)).find((x) => !isTrump(st, x) && legalThrow(st, pid, x));
+  const legal = hand.filter((x) => legalThrow(st, pid, x)).sort(rankSort(st));
+  let c = legal.find((x) => !isTrump(st, x));
+  if (!c && st.deck.length === 0) c = legal.find(() => st.taking || hand.length <= 2); // конец игры: добиваем или нагружаем защитника
   return c ? { type: 'attack', cardId: c.id } : { type: 'pass' };
 }
 
