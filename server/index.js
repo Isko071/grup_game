@@ -30,6 +30,21 @@ io.on('connection', (socket) => {
     socket.join(r.code);
   };
 
+  // Возврат после обрыва связи: клиент передаёт код комнаты и токен прямо при подключении,
+  // поэтому сокет привязан к игроку ещё до первого действия (иначе нажатие в этот момент давало «Вы не в комнате»)
+  const auth = socket.handshake.auth || {};
+  if (auth.code && auth.token) {
+    const r = rooms.get(auth.code);
+    const known = r && r.byToken(auth.token);
+    if (known) {
+      if (known.socketId && known.socketId !== socket.id) io.to(known.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства' });
+      const longOff = known.offAt && Date.now() - known.offAt > 20000;
+      attach(r, known);
+      if (longOff) r.pushChat(null, `${known.name} вернулся`);
+      r.broadcast();
+    }
+  }
+
   const guard = (fn) => (payload, ack) => {
     ack = typeof ack === 'function' ? ack : () => {};
     try {
@@ -62,8 +77,9 @@ io.on('connection', (socket) => {
     const known = r.byToken(p.token);
     if (known) {
       if (known.socketId && known.socketId !== socket.id) io.to(known.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства' });
+      const longOff = known.offAt && Date.now() - known.offAt > 20000;
       attach(r, known);
-      r.pushChat(null, `${known.name} вернулся`);
+      if (longOff) r.pushChat(null, `${known.name} вернулся`);
       ack({ ok: true, code: r.code, token: known.token });
       return r.broadcast();
     }

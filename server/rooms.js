@@ -74,6 +74,7 @@ class Room {
     if (!p) return;
     p.connected = false;
     p.socketId = null;
+    p.offAt = Date.now();
     if (this.phase === 'lobby') {
       // в лобби место освобождается после паузы: игрок мог просто свернуть вкладку или перезагрузить страницу
       setTimeout(() => {
