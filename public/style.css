@@ -513,3 +513,6 @@ body.chatopen{overflow:hidden;overscroll-behavior:none}
 button{transition:background-color .2s ease,color .2s ease,transform .15s ease,opacity .2s ease}
 button:not(:disabled):active{transform:scale(.97)}
 @media (prefers-reduced-motion:reduce){.table.durak,.hero{animation:none}.seat.active .avatar{animation:none}}
+/* подсказок нет: карты всегда выглядят одинаково и нажимаются любые */
+.dhand .pcard{cursor:pointer;filter:none}
+.dtable .pair{cursor:pointer}

@@ -444,8 +444,8 @@
         <div class="mebar"><div id="dMeSeat"></div><div class="actions" id="dActions"></div></div>
       </div>`;
     D.cards.clear(); D.seats.clear(); D.pairs.clear(); D.prev = null; D.deckKey = ''; D.discKey = '';
-    $('#dHand').onclick = (e) => { const el = e.target.closest('.pcard'); if (el && el.classList.contains('ok')) onDurakHand(Number(el.dataset.id)); };
-    $('#dtable').onclick = (e) => { const pe = e.target.closest('.pair.target'); if (pe) onDurakTarget(Number(pe.dataset.att)); };
+    $('#dHand').onclick = (e) => { const el = e.target.closest('.pcard'); if (el) onDurakHand(Number(el.dataset.id)); };
+    $('#dtable').onclick = (e) => { const pe = e.target.closest('.pair'); if (pe && pe.querySelectorAll('.pcard').length === 1) onDurakTarget(Number(pe.dataset.att)); };
     $('#dActions').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
       const act = (a) => emit('game:action', a);
@@ -456,12 +456,14 @@
     };
   }
 
+  // Подсказок нет: нажатие на карту — это попытка хода, а подходит ли она, говорит сервер
   function onDurakHand(id) {
     const g = S.game;
-    const isDef = g.defender === S.me;
-    if (isDef && !g.taking) {
-      const t = g.canDefend[id] || [];
-      if (t.length === 1 && !g.canTransfer.includes(id)) { dSel = null; return emit('game:action', { type: 'defend', attackId: t[0], cardId: id }); }
+    if (g.defender === S.me && !g.taking) {
+      const open = g.table.filter((p) => !p.d).length;
+      if (!open) return;
+      // одна неотбитая карта и нет перевода — отбиваем сразу, иначе выбираем карту, а потом нажимаем на карту на столе
+      if (open === 1 && !S.rules.transfer) { const idx = g.table.findIndex((p) => !p.d); dSel = null; return emit('game:action', { type: 'defend', attackId: idx, cardId: id }); }
       dSel = dSel === id ? null : id;
       renderDurak();
     } else emit('game:action', { type: 'attack', cardId: id });
@@ -509,8 +511,8 @@
     const first = !D.prev;
     if (dSel !== null && !g.hand.some((c) => c.id === dSel)) dSel = null;
     if (!isDef || g.taking) dSel = null;
-    const targets = dSel !== null && g.canDefend[dSel] ? g.canDefend[dSel] : [];
-    const iAct = !g.over && (g.canTake || g.canPass || g.canAttack.length > 0 || Object.keys(g.canDefend).length > 0);
+    // «мой ход» по роли, без намёка на то, есть ли чем ходить
+    const iAct = !g.over && (g.canTake || g.canPass || (g.table.length === 0 && g.attacker === me));
     const myIdx = g.order.indexOf(me);
     const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
 
@@ -561,7 +563,6 @@
       let pe = D.pairs.get(p.a.id);
       if (!pe) { pe = document.createElement('div'); pe.className = 'pair'; D.pairs.set(p.a.id, pe); }
       pe.dataset.att = i;
-      pe.classList.toggle('target', targets.includes(i));
       const a = getCard(p.a);
       a.className = `pcard ${a.dataset.red} ${p.a.suit === g.trumpSuit ? 'trump' : ''}`;
       if (a.parentNode !== pe) pe.prepend(a);
@@ -590,10 +591,7 @@
       const el = getCard(c);
       live.add(c.id);
       const t = c.suit === g.trumpSuit ? 'trump' : '';
-      let st;
-      if (isDef && !g.taking) st = `${g.canDefend[c.id] || g.canTransfer.includes(c.id) ? 'ok' : 'no'} ${dSel === c.id ? 'sel' : ''}`;
-      else st = g.canAttack.includes(c.id) ? 'ok' : 'no';
-      el.className = `pcard ${el.dataset.red} ${st} ${t}`;
+      el.className = `pcard ${el.dataset.red} ${dSel === c.id ? 'sel' : ''} ${t}`;
       return el;
     });
     const handBox = $('#dHand');
@@ -610,16 +608,15 @@
     let status;
     if (g.over) status = g.loser ? `🤡 Дурак — ${nameOf(g.loser)}` : '🤝 Ничья';
     else if (g.out.includes(me)) status = 'Вы вышли из игры 🎉';
-    else if (isDef) status = g.taking ? 'Вы берёте. Ждём, пока подкинут' : (g.canTake ? 'Отбейтесь или возьмите карты' : 'Ждём ход');
-    else if (g.table.length === 0 && g.attacker === me) status = 'Ваш ход — сходите любой картой';
-    else if (g.canPass || g.canAttack.length) status = g.taking ? 'Можно подкинуть' : 'Можно подкинуть или нажать «Бито»';
+    else if (isDef) status = g.taking ? 'Вы берёте' : 'Вы отбиваетесь';
+    else if (g.attacker === me) status = 'Вы ходите';
     else status = `Ходит ${nameOf(g.attacker)}, защищается ${nameOf(g.defender)}`;
     const st = $('#dStatus'); setText(st, status); st.classList.toggle('mine', iAct);
     $('#dHandWrap').classList.toggle('active', iAct);
     $('#dActions').innerHTML = `
-      ${dSel !== null && g.canTransfer.includes(dSel) ? '<button class="btn" id="dTransfer">↪ Перевести</button>' : ''}
+      ${dSel !== null && S.rules.transfer && isDef && !g.taking && g.table.length > 0 && g.table.every((p) => !p.d) ? '<button class="btn" id="dTransfer">↪ Перевести</button>' : ''}
       ${g.canTake ? '<button class="btn danger" id="dTake">Беру</button>' : ''}
-      ${g.canPass ? `<button class="btn ghost" id="dPass">${g.taking ? 'Хватит' : 'Бито'}</button>` : ''}
+      ${g.canPass ? `<button class="btn ghost" id="dPass">${me === g.attacker && !g.taking ? 'Бито' : 'Пас'}</button>` : ''}
       ${g.over && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
       ${g.over && !amHost ? '<span class="waitmsg">Ждём создателя…</span>' : ''}`;
 
