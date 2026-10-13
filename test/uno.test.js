@@ -257,3 +257,25 @@ test('случайные партии доигрываются до конца �
     }
   }
 });
+
+test('боты УНО: на двух картах жмут «УНО!», ловят забывших и доигрывают партию', () => {
+  assert.strictEqual(uno.meta.supportsBots, true);
+  const st = fresh();
+  st.hands.p1 = [card(1, 'r', '1'), card(2, 'r', '2')];
+  assert.deepStrictEqual(uno.botMove(st, 'p1'), { type: 'uno' });
+  for (const rules of [{ stack: 'all', drawMode: 'until' }, { stack: 'same', drawMode: 'one' }, { stack: 'off', drawMode: 'one' }]) {
+    for (let g = 0; g < 15; g++) {
+      const g1 = uno.create(P(2 + (g % 7)), rules);
+      let guard = 0;
+      while (!g1.over && guard++ < 6000) {
+        let moved = false;
+        for (const id of g1.order) {
+          const a = uno.botMove(g1, id);
+          if (a) { const r = uno.act(g1, id, a); assert.ok(!r.error, JSON.stringify(a) + ' ' + r.error); moved = true; break; }
+        }
+        assert.ok(moved, 'ни у кого нет хода');
+      }
+      assert.ok(g1.over, 'партия с ботами не завершилась');
+    }
+  }
+});

@@ -12,7 +12,7 @@ const meta = {
   title: 'УНО',
   minPlayers: 2,
   maxPlayers: 10,
-  supportsBots: false,
+  supportsBots: true,
   defaultRules: { stack: 'all', drawMode: 'one', turnTimer: 60 }, // таймер 60 с фиксирован, в настройках его нет
   rulesSchema: [
     {
@@ -319,6 +319,26 @@ function view(st, pid, ctx) {
   };
 }
 
+// Простой бот: на двух картах нажимает «УНО!», ловит забывших, играет первую подходящую карту
+// (дикие придерживает), цвет выбирает тот, которого больше в руке.
+function botMove(st, pid) {
+  if (st.over || st.out[pid]) return null;
+  const hand = st.hands[pid];
+  if (hand.length === 2 && !st.called[pid]) return { type: 'uno' };
+  const t = st.catchable;
+  if (t && t !== pid && !st.out[t] && st.hands[t].length === 1 && !st.called[t] && st.rnd() < 0.5) return { type: 'uno' };
+  if (currentId(st) !== pid) return null;
+  const ok = hand.filter((c) => (st.drawn === null || st.drawn === c.id) && isPlayable(st, c));
+  if (ok.length) {
+    ok.sort((a, b) => (a.color === 'w') - (b.color === 'w'));
+    const counts = {};
+    for (const h of hand) if (h.color !== 'w') counts[h.color] = (counts[h.color] || 0) + 1;
+    const color = Object.keys(counts).sort((x, y) => counts[y] - counts[x])[0] || COLORS[Math.floor(st.rnd() * 4)];
+    return { type: 'play', cardId: ok[0].id, color };
+  }
+  return st.drawn !== null ? { type: 'pass' } : { type: 'draw' };
+}
+
 // Автоход по таймеру: взять карту (или принять штраф), а если уже взял — пас.
 function timeoutMove(st, pid) {
   if (st.over || st.out[pid] || currentId(st) !== pid) return null;
@@ -326,7 +346,7 @@ function timeoutMove(st, pid) {
 }
 
 module.exports = {
-  meta, create, act, view, timeoutMove, removePlayer,
+  meta, create, act, view, botMove, timeoutMove, removePlayer,
   currentPlayer: currentId,
   turnKey: (st) => `${currentId(st)}:${st.drawn !== null}`,
   isOver: (st) => st.over,

@@ -144,20 +144,52 @@ test('режим с ведущим: ведущий не играет, видит
   assert.strictEqual(mafia.validate(P(6), { mode: 'live' }), null);
 });
 
-test('боты доигрывают партии до конца', () => {
+test('мафия без ботов', () => {
+  assert.strictEqual(mafia.meta.supportsBots, false);
+  assert.strictEqual(typeof mafia.botMove, 'undefined');
+});
+
+test('выход игрока: считается выбывшим, роль раскрыта, ночь не зависает', () => {
+  const st = game(['mafia', 'doctor', 'commissar', 'civil', 'civil', 'civil']);
+  night(st, 'p0', 'p3'); night(st, 'p1', 'p3'); // ждём только комиссара
+  assert.strictEqual(st.phase, 'night');
+  mafia.removePlayer(st, 'p2'); // комиссар вышел — ночь закрывается сама
+  assert.strictEqual(st.alive.p2, false);
+  assert.strictEqual(st.phase, 'day');
+  assert.deepStrictEqual(mafia.view(st, 'p4', ctx).roles, { p2: 'commissar' });
+  assert.ok(st.log.some((l) => l.includes('вышел из игры') && l.includes('Комиссар')));
+});
+
+test('выход последней мафии — победа мирных; выход ведущего в живом режиме — конец', () => {
+  const st = game(['mafia', 'doctor', 'commissar', 'civil', 'civil']);
+  mafia.removePlayer(st, 'p0');
+  assert.strictEqual(st.phase, 'over');
+  assert.strictEqual(st.winner, 'town');
+  const live = mafia.create(P(7), { mode: 'live' }, Math.random, ctx);
+  mafia.removePlayer(live, 'p3'); // обычный игрок — просто выбыл
+  assert.strictEqual(live.alive.p3, false);
+  assert.strictEqual(live.phase, 'night');
+  mafia.removePlayer(live, 'p0'); // ведущий
+  assert.strictEqual(live.phase, 'over');
+});
+
+test('партии без ботов доигрываются до конца (игроки ходят случайно)', () => {
+  const rnd = (arr) => arr[Math.floor(Math.random() * arr.length)];
   for (const n of [5, 6, 7, 9, 12, 15]) {
     for (let g = 0; g < 10; g++) {
       const st = mafia.create(P(n), { maniac: g % 2 === 0 }, Math.random, ctx);
       let guard = 0;
       while (st.phase !== 'over' && guard++ < 2000) {
-        let moved = false;
-        for (const id of st.order) {
-          const a = mafia.botMove(st, id);
-          if (a) { assert.ok(!mafia.act(st, id, a, ctx).error); moved = true; break; }
-        }
-        if (!moved) { // роль хоста: закрыть фазу
-          const r = mafia.act(st, 'p0', { type: st.phase === 'night' ? 'endNight' : 'endDay' }, ctx);
-          assert.ok(!r.error, r.error);
+        const alive = st.order.filter((id) => st.alive[id]);
+        if (st.phase === 'night') {
+          for (const id of alive) {
+            const t = mafia._internal.nightTargets(st, id);
+            if (t.length && st.phase === 'night') mafia.act(st, id, { type: 'night', target: rnd(t) }, ctx);
+          }
+          if (st.phase === 'night') assert.ok(!mafia.act(st, 'p0', { type: 'endNight' }, ctx).error);
+        } else {
+          for (const id of alive) mafia.act(st, id, { type: 'vote', target: rnd(alive.filter((x) => x !== id)) }, ctx);
+          assert.ok(!mafia.act(st, 'p0', { type: 'endDay' }, ctx).error);
         }
       }
       assert.strictEqual(st.phase, 'over', `n=${n} не завершилась`);
