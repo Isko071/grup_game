@@ -3,12 +3,11 @@
 const games = {
   uno: require('./uno'),
   durak: require('./durak'),
+  mafia: require('./mafia'),
 };
 
 module.exports = {
   games,
   list: () => Object.values(games).map((g) => g.meta),
-  soon: [
-    { id: 'mafia', title: 'Мафия' },
-  ],
+  soon: [],
 };

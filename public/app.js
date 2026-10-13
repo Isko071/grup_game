@@ -149,8 +149,11 @@
     const log = $('#chatLog');
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     log.innerHTML = S.chat.map((m) => m.from
-      ? `<div><b>${esc(m.from)}:</b> ${esc(m.text)}</div>`
+      ? `<div class="${m.ch === 'mafia' ? 'mchat' : ''}">${m.ch === 'mafia' ? '🔪 ' : ''}<b>${esc(m.from)}:</b> ${esc(m.text)}</div>`
       : `<div class="sys">${esc(m.text)}</div>`).join('');
+    const ci = $('#chatInput');
+    ci.disabled = !S.chatChannel;
+    ci.placeholder = !S.chatChannel ? 'Сейчас писать нельзя' : S.chatChannel === 'mafia' ? '🔪 Тайный чат мафии…' : 'Сообщение…';
     if (atBottom || chatOpen) log.scrollTop = log.scrollHeight;
     const rb = $('#reactBar');
     if (!rb.dataset.ready) {
@@ -182,7 +185,7 @@
   // ---------- рендер ----------
   function render() {
     if (!S) return renderHome();
-    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dLayout = null; dSel = null; return renderLobby(); }
+    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dLayout = null; dSel = null; mSel = null; return renderLobby(); }
     renderGame();
   }
 
@@ -238,7 +241,9 @@
           </div>
           <div>${(game.rulesSchema || []).map((r) => r.type === 'select' ? `
             <div class="rule"><span>${esc(r.label)}</span>
-              <select class="sel" data-sel="${r.key}" ${amHost ? '' : 'disabled'}>${r.options.map((o) => `<option value="${o}" ${Number(S.rules[r.key]) === o ? 'selected' : ''}>${o === 0 ? esc(r.zero) : o + ' ' + esc(r.unit)}</option>`).join('')}</select>
+              <select class="sel" data-sel="${r.key}" ${amHost ? '' : 'disabled'}>${r.choices
+    ? r.choices.map((c) => `<option value="${esc(c.value)}" ${String(S.rules[r.key]) === String(c.value) ? 'selected' : ''}>${esc(c.label)}</option>`).join('')
+    : r.options.map((o) => `<option value="${o}" ${Number(S.rules[r.key]) === o ? 'selected' : ''}>${o === 0 ? esc(r.zero) : o + ' ' + esc(r.unit)}</option>`).join('')}</select>
             </div>` : `
             <div class="rule"><span>${esc(r.label)}</span>
               <button class="switch ${S.rules[r.key] ? 'on' : ''}" data-rule="${r.key}" ${amHost ? '' : 'disabled'} aria-pressed="${!!S.rules[r.key]}"></button>
@@ -254,7 +259,7 @@
     on('[data-kick]', (el) => emit('room:kick', { id: el.dataset.kick }));
     on('[data-game]', (el) => emit('room:settings', { gameId: el.dataset.game }));
     on('[data-rule]', (el) => emit('room:settings', { rules: { [el.dataset.rule]: !S.rules[el.dataset.rule] } }));
-    app.querySelectorAll('[data-sel]').forEach((el) => (el.onchange = () => emit('room:settings', { rules: { [el.dataset.sel]: Number(el.value) } })));
+    app.querySelectorAll('[data-sel]').forEach((el) => (el.onchange = () => emit('room:settings', { rules: { [el.dataset.sel]: el.value } })));
     const ab = $('#addBot'); if (ab) ab.onclick = () => emit('room:addBot');
     const st = $('#start'); if (st) st.onclick = () => emit('room:start');
     $('#leave').onclick = leave;
@@ -272,7 +277,7 @@
   const COLOR_RU = { r: 'красный', y: 'жёлтый', g: 'зелёный', b: 'синий' };
 
   function renderGame() {
-    const fn = { uno: renderUno, durak: renderDurak }[S.gameId];
+    const fn = { uno: renderUno, durak: renderDurak, mafia: renderMafia }[S.gameId];
     if (fn) return fn();
     app.innerHTML = '<div class="card-box">Эта игра пока недоступна</div>';
   }
@@ -465,6 +470,119 @@
     bind('#dTake', () => act({ type: 'take' }));
     bind('#dPass', () => act({ type: 'pass' }));
     bind('#dTransfer', () => { const id = dSel; dSel = null; act({ type: 'transfer', cardId: id }); });
+    bind('#again', () => emit('room:lobby'));
+  }
+
+
+  // ---------- мафия ----------
+  let mSel = null; // выбранная ночью цель (для необратимых действий)
+  const TEAM_NAME = { town: 'Мирные жители', mafia: 'Мафия', maniac: 'Маньяк' };
+  const NIGHT_HINT = {
+    kill: 'Выберите жертву (мафия выбирает вместе)',
+    heal: 'Кого лечить этой ночью?',
+    check: 'Кого проверить этой ночью?',
+    maniac: 'Кого убить этой ночью?',
+  };
+
+  function renderMafia() {
+    const g = S.game;
+    const me = S.me;
+    const live = g.mode === 'live';
+    const night = g.phase === 'night';
+    const imAlive = !!g.alive[me];
+    const voteCount = {};
+    Object.values(g.votes || {}).forEach((t) => { if (t) voteCount[t] = (voteCount[t] || 0) + 1; });
+    const nt = g.night;
+    const targets = nt && !nt.done || (nt && nt.kind === 'kill') ? nt.targets : [];
+    const dayVote = !night && !g.over && imAlive && !live;
+    const myVote = (g.votes || {})[me];
+    if (!night || !nt || nt.done) mSel = null;
+
+    const banner = g.over
+      ? { icon: '🏁', title: { town: 'Победа мирных жителей!', mafia: 'Победа мафии!', maniac: 'Победил маньяк!' }[g.winner] || 'Игра окончена', sub: 'Роли раскрыты' }
+      : night ? { icon: '🌙', title: `Ночь ${g.round}`, sub: live ? 'Город спит' : 'Город засыпает…' }
+        : { icon: '☀️', title: `День ${g.round}`, sub: live ? 'Обсуждайте' : 'Обсуждайте и голосуйте' };
+
+    let panel = '';
+    if (g.isMod) {
+      panel = `<div class="mp-text">Вы — ведущий. Отмечайте выбывших и переключайте фазы.</div>
+        <div class="actions">
+          <button class="btn ghost" data-phase="${night ? 'day' : 'night'}">${night ? '☀️ Наступил день' : '🌙 Наступила ночь'}</button>
+          <button class="btn danger" id="mEnd">Завершить игру</button>
+        </div>`;
+    } else if (g.over) {
+      panel = `<div class="actions">${S.host === me ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём хоста…</span>'}</div>`;
+    } else if (live) {
+      panel = `<div class="mp-text">${imAlive ? 'Играйте вживую. Ведущий отмечает выбывших.' : 'Вы выбыли. Наблюдайте молча 🤫'}</div>`;
+    } else if (!imAlive) {
+      panel = '<div class="mp-text">Вы выбыли из игры. Наблюдайте молча 🤫</div>';
+    } else if (night) {
+      if (!nt) panel = '<div class="mp-text">Вы спите… 😴</div>';
+      else if (nt.done && nt.kind !== 'kill') panel = '<div class="mp-text">Выбор сделан. Ждём остальных…</div>';
+      else {
+        panel = `<div class="mp-text">${NIGHT_HINT[nt.kind]}</div>`;
+        if (nt.kind !== 'kill') panel += `<div class="actions"><button class="btn" id="mConfirm" ${mSel ? '' : 'disabled'}>Подтвердить выбор</button></div>`;
+        else if (nt.done) panel += '<div class="mp-text sm">Вы можете изменить голос, пока ночь не закончилась</div>';
+      }
+    } else {
+      const alive = g.order.filter((id) => g.alive[id]);
+      const voted = alive.filter((id) => id in (g.votes || {})).length;
+      panel = `<div class="mp-text">Нажмите на игрока, чтобы проголосовать. Проголосовали: ${voted} из ${alive.length}</div>
+        ${myVote ? '<div class="actions"><button class="btn ghost small" id="mUnvote">Отменить голос</button></div>' : ''}`;
+    }
+    const hostBtns = g.canEndNight ? '<button class="btn ghost" id="mEndNight">Закончить ночь</button>'
+      : g.canEndDay ? '<button class="btn" id="mEndDay">Подвести итоги голосования</button>' : '';
+
+    const card = (id) => {
+      const nm = nameOf(id);
+      const alive = !!g.alive[id];
+      const mine = id === me;
+      const inTeam = g.team.includes(id);
+      const chk = (g.checks || []).find((c) => c.id === id);
+      const clickable = !g.over && alive && !g.isMod && ((night && nt && targets.includes(id)) || (dayVote && id !== me));
+      const sel = (night && mSel === id) || (night && nt && nt.choice === id) || (!night && myVote === id);
+      const voters = Object.entries(g.votes || {}).filter(([, t]) => t === id).map(([v]) => nameOf(v));
+      const mv = g.mafiaVotes ? Object.entries(g.mafiaVotes).filter(([, t]) => t === id).length : 0;
+      const role = g.roles ? g.roleTitles[g.roles[id]] : '';
+      return `<div class="pcell ${alive ? '' : 'dead'} ${clickable ? 'click' : ''} ${sel ? 'sel' : ''} ${mine ? 'me' : ''}" data-pid="${id}">
+        <span class="seatno">${g.order.indexOf(id) + 1}</span>
+        <div class="avatar" style="background:${avatarColor(nm)}">${esc(nm.slice(0, 1).toUpperCase())}${!alive ? '<span class="rolebadge">✝</span>' : inTeam ? '<span class="rolebadge">🔪</span>' : ''}${mv ? `<span class="votebadge">🔪${mv}</span>` : ''}${voteCount[id] ? `<span class="votebadge">${voteCount[id]}</span>` : ''}</div>
+        <div class="sname">${esc(nm)}${mine ? ' (вы)' : ''}</div>
+        ${role ? `<div class="prole ${alive ? '' : 'was'}">${alive ? '' : 'был: '}${esc(role)}</div>` : ''}
+        ${chk ? `<div class="prole ${chk.mafia ? 'bad' : 'good'}">${chk.mafia ? '🔪 мафия' : '✅ не мафия'}</div>` : ''}
+        ${voters.length ? `<div class="pvoters">за: ${esc(voters.join(', '))}</div>` : ''}
+        ${g.isMod && !g.over ? `<button class="btn ghost small" data-toggle="${id}">${alive ? 'Выбыл' : 'Вернуть'}</button>` : ''}
+      </div>`;
+    };
+
+    const ri = g.roleInfo;
+    app.innerHTML = `
+      <div class="table mafia ${night ? 'night' : 'day'} ${g.over ? 'over' : ''}">
+        <div class="mbanner"><span class="micon">${banner.icon}</span><div><b>${esc(banner.title)}</b><small>${esc(banner.sub)}</small></div></div>
+        ${ri ? `<div class="rolecard"><b>Ваша роль: ${esc(ri.title)}</b><span>${esc(ri.text)}</span>${g.team.length > 1 ? `<span class="tm">Ваша команда: ${esc(g.team.filter((x) => x !== me).map(nameOf).join(', '))}</span>` : ''}</div>` : ''}
+        <div class="mgrid">${(g.isMod ? g.order : g.order).map(card).join('')}</div>
+        <div class="mpanel">${panel}${hostBtns ? `<div class="actions">${hostBtns}</div>` : ''}</div>
+        <div class="mlog">${g.log.slice(-5).map((l) => `<div>${esc(l)}</div>`).join('')}</div>
+      </div>`;
+
+    const act = (a) => emit('game:action', a);
+    app.querySelectorAll('.pcell.click').forEach((el) => {
+      el.onclick = () => {
+        const id = el.dataset.pid;
+        if (night) {
+          if (nt.kind === 'kill') act({ type: 'night', target: id });
+          else { mSel = id; renderMafia(); }
+        } else act({ type: 'vote', target: id });
+      };
+    });
+    app.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = () => act({ type: 'toggleAlive', id: b.dataset.toggle })));
+    app.querySelectorAll('[data-phase]').forEach((b) => (b.onclick = () => act({ type: 'setPhase', phase: b.dataset.phase })));
+    const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    bind('#mConfirm', () => { const t = mSel; mSel = null; act({ type: 'night', target: t }); });
+    bind('#mUnvote', () => act({ type: 'vote', target: null }));
+    bind('#mEndNight', () => act({ type: 'endNight' }));
+    bind('#mEndDay', () => act({ type: 'endDay' }));
+    bind('#mEnd', () => { if (confirm('Завершить игру и раскрыть роли?')) act({ type: 'endGame' }); });
     bind('#again', () => emit('room:lobby'));
   }
 

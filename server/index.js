@@ -89,7 +89,10 @@ io.on('connection', (socket) => {
       for (const s of schema) {
         if (!(s.key in p.rules)) continue;
         if (s.type === 'bool') room.rules[s.key] = !!p.rules[s.key];
-        else if (s.type === 'select' && s.options.includes(Number(p.rules[s.key]))) room.rules[s.key] = Number(p.rules[s.key]);
+        else if (s.type === 'select' && s.choices) {
+          const c = s.choices.find((x) => String(x.value) === String(p.rules[s.key]));
+          if (c) room.rules[s.key] = c.value;
+        } else if (s.type === 'select' && s.options.includes(Number(p.rules[s.key]))) room.rules[s.key] = Number(p.rules[s.key]);
       }
     }
     ack({ ok: true });
@@ -144,7 +147,9 @@ io.on('connection', (socket) => {
   socket.on('chat:send', guard((p, ack) => {
     const text = String(p.text || '').trim();
     if (!text) return ack({ error: 'Пусто' });
-    room.pushChat(me.name, text);
+    const pol = room.chatPolicyFor(me.id);
+    if (!pol) return ack({ error: 'Сейчас писать нельзя' });
+    room.pushChat(me.name, text, pol.to, pol.channel);
     ack({ ok: true });
     room.broadcast();
   }));
