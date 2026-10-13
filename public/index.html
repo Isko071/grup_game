@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Карточный круг</title>
+<meta name="description" content="Уно, дурак и мафия с друзьями — без регистрации">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='14' y='6' width='36' height='52' rx='6' fill='%236c5ce7'/%3E%3Ctext x='32' y='42' font-size='28' text-anchor='middle' fill='white'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/" id="brand">♠ Карточный круг</a>
+  <div class="top-actions">
+    <span id="roomBadge" class="badge" hidden></span>
+    <button id="soundBtn" class="icon-btn" title="Звук">🔊</button>
+    <button id="themeBtn" class="icon-btn" title="Тема">🌓</button>
+  </div>
+</header>
+
+<main id="app"></main>
+
+<aside id="chat" class="chat" hidden>
+  <div class="chat-head"><b>Чат</b><button id="chatClose" class="icon-btn">✕</button></div>
+  <div id="chatLog" class="chat-log"></div>
+  <div id="reactBar" class="react-bar"></div>
+  <form id="chatForm" class="chat-form" autocomplete="off">
+    <input id="chatInput" maxlength="300" placeholder="Сообщение…">
+    <button class="btn small">➤</button>
+  </form>
+</aside>
+<button id="chatFab" class="fab" hidden>💬<span id="chatDot" class="dot" hidden></span></button>
+<div id="floaters" class="floaters"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
