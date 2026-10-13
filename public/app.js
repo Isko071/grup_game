@@ -138,7 +138,7 @@
   socket.on('kicked', (p) => { toast(p.reason || 'Вас убрали из комнаты'); session = null; S = null; store.del('session'); history.replaceState(null, '', '/'); $('#chat').hidden = true; $('#chatFab').hidden = true; renderHome(); });
 
   // В дураке между изменениями на столе держим паузу в секунду: иначе ходы (особенно ботов) мелькают слишком резко
-  const DURAK_GAP = 1000;
+  const DURAK_GAP = 1100;
   let dQueue = [];
   let dTimer = null;
   let dLastAt = 0;
@@ -391,8 +391,10 @@
   // Элементы не пересоздаются при каждом ходе: карта — один и тот же узел, пока она на экране, и просто
   // переезжает (рука → стол → бито/рука взявшего). Поэтому нет мерцания и «перезапуска» анимаций.
   const D = { cards: new Map(), seats: new Map(), pairs: new Map(), prev: null, deckKey: '', discKey: '' };
-  const FLY_MS = 900;
-  const FLY_EASE = 'cubic-bezier(.22,.8,.22,1)';
+  // темп и кривая — как в раздаче карт в projeckt_one: спокойно, с мягким замедлением; карты вылетают по очереди
+  const FLY_MS = 750;
+  const FLY_EASE = 'cubic-bezier(.22,.8,.3,1)';
+  const STAGGER_MS = 160;
 
   // Призрак карты, летящий из одного места в другое (для карт, которых уже нет на экране)
   function flyGhost(html, from, to, delay = 0, w) {
@@ -404,8 +406,16 @@
     const dx = (to.left + to.width / 2) - (from.left + from.width / 2);
     const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
     const end = `translate(${dx}px,${dy}px) scale(${to.width / from.width})`;
+    const dur = FLY_MS + 150;
+    const card = g.firstElementChild;
+    if (card && card.classList.contains('pcard') && !card.classList.contains('back')) {
+      const cv = document.createElement('i');
+      cv.className = 'cover';
+      card.appendChild(cv);
+      cv.animate([{ opacity: 0, offset: 0.3 }, { opacity: 1, offset: 0.6 }], { duration: dur, delay, easing: 'linear', fill: 'both' });
+    }
     const a = g.animate([{ transform: 'none', opacity: 1 }, { transform: end, opacity: 1, offset: 0.85 }, { transform: end, opacity: 0 }],
-      { duration: FLY_MS + 150, delay, easing: FLY_EASE, fill: 'both' });
+      { duration: dur, delay, easing: FLY_EASE, fill: 'both' });
     a.onfinish = () => g.remove();
   }
 
@@ -567,7 +577,14 @@
     syncOrder($('#dtable'), pairEls);
 
     // рука: отсортирована (козыри в конце), карты, ушедшие на стол, переехали в пары выше
-    const order = ['d', 'c', 'h', 's'].filter((s) => s !== g.trumpSuit).concat(g.trumpSuit);
+    // козырь всегда первым (слева), остальные масти так, чтобы красные и чёрные чередовались; внутри масти — по возрастанию
+    const isRed = (x) => x === 'h' || x === 'd';
+    const order = [g.trumpSuit];
+    const rest = ['h', 'c', 'd', 's'].filter((x) => x !== g.trumpSuit);
+    while (rest.length) {
+      const i = rest.findIndex((x) => isRed(x) !== isRed(order[order.length - 1]));
+      order.push(rest.splice(i >= 0 ? i : 0, 1)[0]);
+    }
     const hand = [...g.hand].sort((x, y) => order.indexOf(x.suit) - order.indexOf(y.suit) || x.rank - y.rank);
     const handEls = hand.map((c) => {
       const el = getCard(c);
@@ -636,16 +653,31 @@
       if (old) {
         if (Math.abs(old.left - to.left) < 1 && Math.abs(old.top - to.top) < 1 && Math.abs(old.width - to.width) < 1) return;
         from = old;
-      } else if (first) { from = deckBefore; delay = deal++ * 110; }
+      } else if (first) { from = deckBefore; delay = deal++ * STAGGER_MS; }
       else if (el.parentNode && el.parentNode.id === 'dHand') from = deckBefore;
       else from = seatFrom(played.shift() || g.attacker);
       if (!from) return;
       const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
       const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
       el.style.zIndex = 60;
-      const a = el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / to.width})`, opacity: old ? 1 : 0.2 }],
-        { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
-      a.onfinish = a.oncancel = () => { el.style.zIndex = ''; };
+      const done = () => { el.style.zIndex = ''; };
+      let a;
+      if (old) {
+        // карта уже была на экране: плавно переезжает на новое место
+        a = el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / to.width})` }],
+          { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+      } else {
+        // новая карта вылетает рубашкой вверх (из колоды или от соперника) и к концу полёта «открывается»
+        a = el.animate([
+          { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(.5) rotate(-16deg)` },
+          { opacity: 1, offset: 0.15 },
+        ], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+        const cv = document.createElement('i');
+        cv.className = 'cover';
+        el.appendChild(cv);
+        cv.animate([{ opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
+      }
+      a.onfinish = a.oncancel = done;
     });
     if (!prev) return;
     // конец раунда: карты со стола ушли в «бито» или к тому, кто взял
@@ -653,14 +685,14 @@
     if (gone.length) {
       const bito = g.discard > prev.discard;
       const target = bito ? discAfter : (prev.defender !== S.me ? seatAfter.get(prev.defender) : null);
-      if (target) gone.forEach((cid, i) => flyGhost(beforeHtml.get(cid), before.get(cid), target, i * 120));
+      if (target) gone.forEach((cid, i) => flyGhost(beforeHtml.get(cid), before.get(cid), target, i * STAGGER_MS));
     }
     // добор из колоды соперниками
     g.order.forEach((id) => {
       if (id === S.me) return;
       let inc = g.counts[id] - (prev.counts[id] || 0);
       if (!g.table.length && prev.tableCids.length && !(g.discard > prev.discard) && prev.defender === id) inc -= prev.tableCids.length;
-      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="pcard back"></div>', cardAt(deckBefore, 34), cardAt(seatAfter.get(id) || deckBefore, 34), 500 + k * 130);
+      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="pcard back"></div>', cardAt(deckBefore, 34), cardAt(seatAfter.get(id) || deckBefore, 34), 400 + k * STAGGER_MS);
     });
   }
 

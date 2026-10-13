@@ -501,3 +501,15 @@ body.chatopen{overflow:hidden;overscroll-behavior:none}
   .dhand .pcard{--w:56px}
   .dhand{padding-top:14px}
 }
+
+/* ======== приёмы из projeckt_one: рубашка на лету, пульсирующее кольцо хода, плавное появление ======== */
+.pcard .cover{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:3;
+  background:repeating-linear-gradient(45deg,#6f9f5d 0 3px,#4f8043 3px 6px),#5f9150;border:calc(var(--w)*.07) solid #f4f4ee;box-sizing:border-box}
+@keyframes pulse-ring{0%,100%{box-shadow:0 0 0 3px rgba(125,255,114,.85),0 0 10px rgba(125,255,114,.45)}50%{box-shadow:0 0 0 6px rgba(125,255,114,.35),0 0 18px rgba(125,255,114,.6)}}
+.seat.active .avatar{animation:pulse-ring 1.8s ease-in-out infinite;border-color:#7dff72}
+@keyframes fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.table.durak{animation:fade-up .3s ease both}
+.hero{animation:fade-up .3s ease both}
+button{transition:background-color .2s ease,color .2s ease,transform .15s ease,opacity .2s ease}
+button:not(:disabled):active{transform:scale(.97)}
+@media (prefers-reduced-motion:reduce){.table.durak,.hero{animation:none}.seat.active .avatar{animation:none}}
