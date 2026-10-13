@@ -1,7 +1,7 @@
 'use strict';
 // Логика МАФИИ. Два режима:
 //  online — сайт ведёт игру сам (ночные действия, голосование, победа);
-//  live   — ведёт живой ведущий (хост не играет): сайт раздаёт роли, ведущий видит все роли и отмечает выбывших.
+//  live   — ведёт живой ведущий (создатель не играет): сайт раздаёт роли, ведущий видит все роли и отмечает выбывших.
 // Состояние меняется на месте; игрокам уходит только view().
 
 const ROLES = {
@@ -23,7 +23,7 @@ const meta = {
   rulesSchema: [
     {
       key: 'mode', label: 'Режим', type: 'select',
-      choices: [{ value: 'online', label: 'Онлайн (сайт ведёт игру)' }, { value: 'live', label: 'С живым ведущим (хост)' }],
+      choices: [{ value: 'online', label: 'Онлайн (сайт ведёт игру)' }, { value: 'live', label: 'С живым ведущим (создатель)' }],
     },
     { key: 'maniac', label: 'Маньяк (если игроков 7 и больше)', type: 'bool' },
   ],
@@ -129,12 +129,12 @@ function act(st, pid, a, ctx) {
 
   // ---- онлайн ----
   if (a.type === 'endNight') {
-    if (pid !== host) return { error: 'Только хост' };
+    if (pid !== host) return { error: 'Только создатель' };
     if (st.phase !== 'night') return { error: 'Сейчас не ночь' };
     return resolveNight(st);
   }
   if (a.type === 'endDay') {
-    if (pid !== host) return { error: 'Только хост' };
+    if (pid !== host) return { error: 'Только создатель' };
     if (st.phase !== 'day') return { error: 'Сейчас не день' };
     return resolveDay(st);
   }

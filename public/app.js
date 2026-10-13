@@ -170,9 +170,29 @@
   };
   function setChat(open) {
     chatOpen = open; $('#chat').hidden = !open;
+    document.body.classList.toggle('chatopen', open);
     $('#chatFab').hidden = open || !S;
-    if (open) { unread = 0; $('#chatDot').hidden = true; renderChat(); setTimeout(() => $('#chatInput').focus(), 50); }
+    if (open) {
+      unread = 0; $('#chatDot').hidden = true; renderChat();
+      // на телефоне клавиатура сама не выезжает: только по нажатию на поле ввода
+      if (matchMedia('(hover: hover)').matches) setTimeout(() => $('#chatInput').focus(), 50);
+    }
   }
+
+  // Клавиатура на телефоне уменьшает видимую область, а не окно: чат подгоняем под неё,
+  // иначе поле ввода уезжает под клавиатуру, а страница «съезжает»
+  const vv = window.visualViewport;
+  function syncViewport() {
+    if (!vv) return;
+    const r = document.documentElement.style;
+    r.setProperty('--vvh', `${vv.height}px`);
+    r.setProperty('--vvt', `${vv.offsetTop}px`);
+    if (chatOpen) {
+      if (window.scrollY) window.scrollTo(0, 0);
+      const log = $('#chatLog'); log.scrollTop = log.scrollHeight;
+    }
+  }
+  if (vv) { vv.addEventListener('resize', syncViewport); vv.addEventListener('scroll', syncViewport); syncViewport(); }
   $('#chatFab').onclick = () => setChat(true);
   $('#chatClose').onclick = () => setChat(false);
   $('#roomBadge').onclick = () => {
@@ -231,7 +251,7 @@
             <li class="${p.connected ? '' : 'off'}">
               <span>${p.bot ? '🤖' : '👤'}</span>
               <span class="nm">${esc(p.name)}${p.id === S.me ? ' (вы)' : ''}</span>
-              ${p.id === S.host ? '<span class="tag">хост</span>' : ''}
+              ${p.id === S.host ? '<span class="tag">создатель</span>' : ''}
               ${!p.connected ? '<span class="tag">нет связи</span>' : ''}
               ${amHost && p.id !== S.me ? `<button class="btn ghost small" data-kick="${p.id}" title="Убрать">✕</button>` : ''}
             </li>`).join('')}</ul>
@@ -256,7 +276,7 @@
           <div style="margin-top:14px">${amHost
             ? `<button class="btn" id="start" style="width:100%" ${S.players.length < game.minPlayers ? 'disabled' : ''}>Начать игру</button>
                ${S.players.length < game.minPlayers ? `<p class="tag" style="margin-top:8px;display:inline-block">Нужно минимум ${game.minPlayers} игрока — позовите друзей или добавьте бота</p>` : ''}`
-            : '<p style="color:var(--muted);margin:0">Ждём, пока хост начнёт игру…</p>'}</div>
+            : '<p style="color:var(--muted);margin:0">Ждём, пока создатель начнёт игру…</p>'}</div>
           <button class="btn ghost small" id="leave" style="margin-top:14px">Выйти из комнаты</button>
         </section>
       </div>`;
@@ -435,7 +455,7 @@
             ${g.canTake ? '<button class="btn danger" id="dTake">Беру</button>' : ''}
             ${g.canPass ? `<button class="btn ghost" id="dPass">${g.taking ? 'Хватит' : 'Бито'}</button>` : ''}
             ${g.over && amHost ? '<button class="btn" id="again">В лобби</button>' : ''}
-            ${g.over && !amHost ? '<span class="waitmsg">Ждём хоста…</span>' : ''}
+            ${g.over && !amHost ? '<span class="waitmsg">Ждём создателя…</span>' : ''}
           </div>
         </div>
       </div>`;
@@ -516,7 +536,7 @@
           <button class="btn danger" id="mEnd">Завершить игру</button>
         </div>`;
     } else if (g.over) {
-      panel = `<div class="actions">${S.host === me ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём хоста…</span>'}</div>`;
+      panel = `<div class="actions">${S.host === me ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём создателя…</span>'}</div>`;
     } else if (live) {
       panel = `<div class="mp-text">${imAlive ? 'Играйте вживую. Ведущий отмечает выбывших.' : 'Вы выбыли. Наблюдайте молча 🤫'}</div>`;
     } else if (!imAlive) {
@@ -654,7 +674,7 @@
     const resultHtml = g.over ? `
       <div class="uresult"><h3>🏁 Итоги</h3>
         <ol>${(g.places || []).map((id, i) => `<li class="${id === me ? 'me' : ''}"><span>${MEDAL[i] || (i + 1) + '.'}</span> ${esc(nameOf(id))}${g.out[id] === 'left' ? ' <small>(вышел)</small>' : g.out[id] === 'finished' ? '' : ` <small>(карт: ${g.counts[id]})</small>`}</li>`).join('')}</ol>
-        ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём хоста…</span>'}
+        ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём создателя…</span>'}
       </div>` : '';
 
     app.innerHTML = `

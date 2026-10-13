@@ -182,12 +182,12 @@ test('победитель выходит, остальные играют; иг
   assert.strictEqual(st.places.length, 4);
 });
 
-test('хост может закончить игру после первого победителя', () => {
+test('создатель может закончить игру после первого победителя', () => {
   const st = fresh(5);
   assert.ok(uno.act(st, 'p0', { type: 'finish' }, ctx).error); // никто ещё не выиграл
   st.hands.p0 = [card(1, 'r', '1')];
   uno.act(st, 'p0', { type: 'play', cardId: 1 });
-  assert.ok(uno.act(st, 'p1', { type: 'finish' }, ctx).error); // не хост
+  assert.ok(uno.act(st, 'p1', { type: 'finish' }, ctx).error); // не создатель
   assert.ok(uno.act(st, 'p1', { type: 'finish' }, { host: 'p1' }).ok);
   assert.strictEqual(st.over, true);
 });

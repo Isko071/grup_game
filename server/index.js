@@ -78,7 +78,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:settings', guard((p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     if (p.gameId) {
       if (!registry.games[p.gameId]) return ack({ error: 'Игра недоступна' });
@@ -104,7 +104,7 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:addBot', guard((_p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     const g = registry.games[room.gameId];
     if (!g.meta.supportsBots) return ack({ error: 'В этой игре нет ботов' });
@@ -115,18 +115,18 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:kick', guard((p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     const t = room.byId(p.id);
     if (!t || t.id === me.id) return ack({ error: 'Нельзя' });
-    if (t.socketId) io.to(t.socketId).emit('kicked', { reason: 'Хост убрал вас из комнаты' });
+    if (t.socketId) io.to(t.socketId).emit('kicked', { reason: 'Создатель убрал вас из комнаты' });
     room.removePlayer(t.id);
     ack({ ok: true });
     room.broadcast();
   }));
 
   socket.on('room:start', guard((_p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     if (room.phase !== 'lobby') return ack({ error: 'Уже идёт' });
     const err = room.start();
     if (err) return ack({ error: err });
@@ -135,7 +135,7 @@ io.on('connection', (socket) => {
   }));
 
   socket.on('room:lobby', guard((_p, ack) => {
-    if (room.hostId !== me.id) return ack({ error: 'Только хост' });
+    if (room.hostId !== me.id) return ack({ error: 'Только создатель' });
     room.backToLobby();
     ack({ ok: true });
     room.broadcast();
