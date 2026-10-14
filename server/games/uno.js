@@ -74,6 +74,7 @@ function create(players, rules = {}, rnd = Math.random) {
     finished: [], // порядок финиша
     places: null, // итоговая таблица мест
     over: false,
+    seq: 0, // номер хода: таймер перезапускается на каждом новом ходе, даже если ходит тот же игрок
     log: [],
     rnd,
   };
@@ -200,6 +201,7 @@ function act(st, pid, a, ctx) {
     st.called[pid] = false;
     if (c && isPlayable(st, c)) {
       st.drawn = c.id;
+      st.seq++;
       say(st, `${nm(st, pid)} берёт ${got} ${cardWord(got)}`);
     } else {
       say(st, `${nm(st, pid)} берёт ${got} ${cardWord(got)} и пасует`);
@@ -262,6 +264,7 @@ function act(st, pid, a, ctx) {
 
 function endTurn(st, skip) {
   st.drawn = null;
+  st.seq++;
   st.turn = advance(st, st.turn, 1 + skip);
 }
 
@@ -370,7 +373,7 @@ function timeoutMove(st, pid) {
 module.exports = {
   meta, create, act, view, botMove, timeoutMove, removePlayer,
   currentPlayer: currentId,
-  turnKey: (st) => `${currentId(st)}:${st.drawn !== null}`,
+  turnKey: (st) => `${currentId(st)}:${st.seq}`,
   isOver: (st) => st.over,
   _internal: { buildDeck, isPlayable, currentId, advance },
 };

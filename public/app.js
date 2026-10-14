@@ -1,8 +1,10 @@
 'use strict';
 (() => {
   // при (пере)подключении сразу отдаём серверу код комнаты и токен, чтобы он привязал сокет к игроку
+  let suppressAuth = false; // эту вкладку «вытеснили» другим устройством: сама в комнату не возвращается
   const socket = io({
     auth: (cb) => {
+      if (suppressAuth) return cb({});
       let sv = null;
       try { sv = JSON.parse(localStorage.getItem('session')); } catch (e) { /* ignore */ }
       cb(sv && sv.code && sv.token ? { code: sv.code, token: sv.token } : {});
@@ -72,17 +74,20 @@
   // Возврат в комнату по токену (после обрыва связи); «Уже в комнате» тоже считается успехом
   function rejoin() {
     const sv = session || loadSession();
-    if (!sv || !store.get('name')) return Promise.resolve(false);
+    if (suppressAuth || !sv || !store.get('name')) return Promise.resolve({ ok: false });
     return new Promise((res) => socket.emit('room:join', { name: store.get('name'), code: sv.code, token: sv.token }, (r) => {
-      if (r && r.ok) { session = { code: r.code, token: r.token }; res(true); } else res(!!(r && r.error === 'Уже в комнате'));
+      if (r && r.ok) { session = { code: r.code, token: r.token }; res({ ok: true }); } else res({ ok: !!(r && r.error === 'Уже в комнате'), error: r && r.error });
     }));
   }
+  const ROOM_GONE = 'Комната закрыта (сервер перезапускался). Создайте новую';
 
   function emit(ev, payload, retry = true) {
     return new Promise((res) => socket.emit(ev, payload || {}, async (r) => {
       // сокет ещё не привязан к игроку (только что переподключились): возвращаемся и повторяем действие один раз
       if (r && r.error === 'Вы не в комнате' && retry && (session || loadSession())) {
-        if (await rejoin()) return res(await emit(ev, payload, false));
+        const rj = await rejoin();
+        if (rj.ok) return res(await emit(ev, payload, false));
+        if (rj.error === 'Комната не найдена') { goHome(ROOM_GONE); return res({ error: rj.error }); }
       }
       if (r && r.error && !dTimer) toast(r.error); // пока интерфейс догоняет очередь, ошибки от «устаревших» нажатий не показываем
       res(r || {});
@@ -98,6 +103,7 @@
   }
 
   async function enter(kind, code) {
+    suppressAuth = false;
     const name = ($('#nameIn') ? $('#nameIn').value : store.get('name') || '').trim();
     if (!name) { homeError = 'Введите ник'; return renderHome(); }
     store.set('name', name);
@@ -117,12 +123,25 @@
 
   function loadSession() { try { return JSON.parse(store.get('session')); } catch (e) { return null; } }
 
-  function leave() {
-    emit('room:leave');
-    session = null; S = null; store.del('session');
+  // Возврат на главную: после выхода, исключения или закрытия комнаты. Очищаем очередь дурака и окна,
+  // чтобы запоздавшие состояния не «вернули» на экран старую комнату
+  function goHome(msg, keepStorage) {
+    flushDurak();
+    seenEndN = 0;
+    lastRenderKey = null;
+    document.querySelectorAll('.modal').forEach((m) => m.remove());
+    session = null; S = null;
+    if (!keepStorage) store.del('session');
     history.replaceState(null, '', '/');
+    chatOpen = false; document.body.classList.remove('chatopen');
     $('#chat').hidden = true; $('#chatFab').hidden = true; $('#roomBadge').hidden = true;
     renderHome();
+    if (msg) toast(msg);
+  }
+
+  function leave() {
+    emit('room:leave');
+    goHome();
   }
 
   socket.on('connect', () => {
@@ -130,12 +149,22 @@
     // сервер привязывает сокет по токену сам; если комната потеряна (сервер перезапускался), возвращаемся на главную
     const sv = session || loadSession();
     const code = urlCode() || (sv && sv.code);
-    if (sv && code && sv.code === code && store.get('name')) {
-      rejoin().then((ok) => { if (!ok && !S) { store.del('session'); renderHome(); } });
+    if (!suppressAuth && sv && code && sv.code === code && store.get('name')) {
+      rejoin().then((rj) => {
+        if (rj.ok) return;
+        if (S && rj.error === 'Комната не найдена') goHome(ROOM_GONE);
+        else if (!S) { store.del('session'); renderHome(); }
+      });
     }
   });
-  socket.on('disconnect', () => { $('#netbar').hidden = false; });
-  socket.on('kicked', (p) => { toast(p.reason || 'Вас убрали из комнаты'); session = null; S = null; store.del('session'); history.replaceState(null, '', '/'); $('#chat').hidden = true; $('#chatFab').hidden = true; renderHome(); });
+  socket.on('disconnect', (reason) => {
+    $('#netbar').hidden = false;
+    if (reason === 'io server disconnect') setTimeout(() => socket.connect(), 300); // сервер сам закрыл соединение — подключаемся заново
+  });
+  socket.on('kicked', (p) => {
+    // вход с другого устройства: общую сессию в браузере не трогаем, но эта вкладка сама больше не возвращается
+    if (p.other) { suppressAuth = true; goHome(p.reason, true); } else goHome(p.reason || 'Вас убрали из комнаты');
+  });
 
   // В дураке между изменениями на столе держим паузу в секунду: иначе ходы (особенно ботов) мелькают слишком резко
   const DURAK_GAP = 1100;
@@ -167,6 +196,7 @@
   function flushDurak() { clearTimeout(dTimer); dTimer = null; dQueue = []; }
 
   socket.on('state', (st) => {
+    if (!session && (suppressAuth || !loadSession())) return; // мы уже вышли из комнаты
     const inDurak = st.gameId === 'durak' && st.phase !== 'lobby' && st.game;
     if (!inDurak || !S || S.gameId !== 'durak' || S.phase === 'lobby') {
       flushDurak();
@@ -196,9 +226,11 @@
     $('#roomBadge').hidden = false; $('#roomBadge').textContent = st.code;
     $('#chatFab').hidden = chatOpen;
     $('#chatDot').hidden = unread === 0;
-    render();
+    const key = JSON.stringify([st.phase, st.gameId, st.host, st.players, st.rules, st.game, st.me]);
+    if (first || key !== lastRenderKey || !app.firstElementChild) { lastRenderKey = key; render(); }
     renderChat();
   }
+  let lastRenderKey = null;
 
   socket.on('reaction', (r) => {
     const el = document.createElement('div');
@@ -210,17 +242,22 @@
   });
 
   // ---------- чат ----------
-  function renderChat() {
+  let chatKey = '';
+  function renderChat(force) {
     if (!S) return;
     const log = $('#chatLog');
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    const last = S.chat[S.chat.length - 1];
+    const key = `${S.chat.length}:${last ? last.t : ''}:${S.chatChannel}`;
+    if (key === chatKey && !force) return;
+    chatKey = key;
     log.innerHTML = S.chat.map((m) => m.from
       ? `<div class="${m.ch === 'mafia' ? 'mchat' : ''}">${m.ch === 'mafia' ? '🔪 ' : ''}<b>${esc(m.from)}:</b> ${esc(m.text)}</div>`
       : `<div class="sys">${esc(m.text)}</div>`).join('');
     const ci = $('#chatInput');
     ci.disabled = !S.chatChannel;
     ci.placeholder = !S.chatChannel ? 'Сейчас писать нельзя' : S.chatChannel === 'mafia' ? '🔪 Тайный чат мафии…' : 'Сообщение…';
-    if (atBottom || chatOpen) log.scrollTop = log.scrollHeight;
+    if (atBottom || force) log.scrollTop = log.scrollHeight;
     const rb = $('#reactBar');
     if (!rb.dataset.ready) {
       rb.innerHTML = S.reactions.map((e) => `<button data-e="${e}">${e}</button>`).join('');
@@ -239,7 +276,7 @@
     document.body.classList.toggle('chatopen', open);
     $('#chatFab').hidden = open || !S;
     if (open) {
-      unread = 0; $('#chatDot').hidden = true; renderChat();
+      unread = 0; $('#chatDot').hidden = true; renderChat(true);
       // на телефоне клавиатура сама не выезжает: только по нажатию на поле ввода
       if (matchMedia('(hover: hover)').matches) setTimeout(() => $('#chatInput').focus(), 50);
     }
@@ -274,7 +311,7 @@
     document.body.classList.toggle('inroom', !!S);
     $('#exitBtn').hidden = !S;
     if (!S) return renderHome();
-    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dSel = null; mSel = null; uLayout = null; return renderLobby(); }
+    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dSel = null; mSel = null; return renderLobby(); }
     renderGame();
   }
 
@@ -805,8 +842,10 @@
     bind('#again', () => emit('room:lobby'));
   }
 
-  // ---------- УНО (стиль мобильной версии) ----------
-  let uLayout = null; // раскладка прошлого рендера — для анимации полёта карт
+  // ---------- УНО: постоянное дерево DOM и плавные перелёты (как в дураке) ----------
+  // Стол строится один раз; карты, аватары, фон с лучами не пересоздаются на каждом ходе,
+  // поэтому ничего не «прыгает»: карта из руки сама переезжает в сброс, лучи крутятся без рывков.
+  const U = { cards: new Map(), seats: new Map(), prev: null, bannerKey: null, resultKey: null, actionsKey: null, dir: 1 };
   const MEDAL = ['🥇', '🥈', '🥉'];
 
   function seatPos(i, k) {
@@ -816,18 +855,187 @@
     return { x: 50 + 41 * Math.cos(phi), y: 31 - 18 * Math.sin(phi), rot: (90 - deg) * 0.8 };
   }
 
+  function playUnoCard(id) {
+    const card = S.game.hand.find((c) => c.id === id);
+    if (!card) return;
+    if (card.color === 'w') pickColor((color) => emit('game:action', { type: 'play', cardId: id, color }));
+    else emit('game:action', { type: 'play', cardId: id });
+  }
+
+  function buildUno() {
+    app.innerHTML = `
+      <div class="table uno">
+        <div class="rays"></div>
+        <div class="orbit"><span></span></div>
+        <div id="uSeats"></div>
+        <div class="ucenter">
+          <div class="upile" id="drawPile"><div class="card back" style="--w:62px"><span class="v">UNO</span></div><b class="pcnt"></b></div>
+          <div class="udisc" id="discard"></div>
+          <div class="upend" id="uPend" hidden></div>
+        </div>
+        <div id="uBanner"></div>
+        <div class="ustatus" id="uStatus"><span class="txt"></span><span id="uTimerTxt"></span></div>
+        <div class="ustrip">
+          <div id="uMe"></div>
+          <div class="uactions" id="uActions"></div>
+          <button class="unobtn" id="uUno" aria-label="УНО"><span>UNO!</span></button>
+        </div>
+        <div class="uhand" id="uHand"></div>
+        <div id="uResult"></div>
+      </div>`;
+    U.cards.clear(); U.seats.clear(); U.prev = null; U.bannerKey = null; U.resultKey = null; U.actionsKey = null; U.dir = 1;
+    $('#uHand').onclick = (e) => { const el = e.target.closest('.card'); if (el && el.classList.contains('ok')) playUnoCard(Number(el.dataset.id)); };
+    $('#drawPile').onclick = () => {
+      const g = S.game;
+      if (g.turn === S.me && !g.over && !g.out[S.me] && g.drawn === null) emit('game:action', { type: 'draw' });
+    };
+    $('#uUno').onclick = () => emit('game:action', { type: 'uno' });
+    $('#uBanner').onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.id === 'uPass') emit('game:action', { type: 'pass' });
+      else if (b.id === 'uPlay' && S.game.drawn !== null) playUnoCard(S.game.drawn);
+    };
+    $('#uActions').onclick = async (e) => {
+      if (!e.target.closest('#uFinish')) return;
+      if (await confirmBox({ title: 'Закончить игру?', text: 'Партия завершится сейчас, места распределятся по текущему положению.', ok: 'Закончить', cancel: 'Продолжить' })) emit('game:action', { type: 'finish' });
+    };
+    $('#uResult').onclick = (e) => { if (e.target.closest('#again')) emit('room:lobby'); };
+  }
+
+  function unoCardEl(c) {
+    const el = elFromHtml(cardHtml(c, '', `data-cid="${c.id}" data-id="${c.id}"`));
+    el.dataset.base = `card ${c.color}${c.value === '+4' ? ' four' : ''}`;
+    return el;
+  }
+
+  function unoPlace(g, id) {
+    if (g.out[id] === 'left') return '🚪';
+    const p = g.places ? g.places.indexOf(id) : g.finished.indexOf(id);
+    if (p < 0 || !(g.out[id] === 'finished' || g.places)) return '';
+    return MEDAL[p] || String(p + 1);
+  }
+
+  function syncUnoAvatar(av, g, id) {
+    const nm = nameOf(id);
+    av.style.background = avatarColor(nm);
+    setText(av.querySelector('.ini'), nm.slice(0, 1).toUpperCase());
+    const cnt = av.querySelector('.ucount');
+    setText(cnt, String(g.counts[id]));
+    cnt.classList.toggle('uno', !!g.called[id] && g.counts[id] === 1);
+    const pl = av.querySelector('.uplace');
+    const mark = unoPlace(g, id);
+    setText(pl, mark);
+    pl.hidden = !mark;
+    pl.classList.toggle('num', /^\d+$/.test(mark));
+    av.classList.toggle('ring', g.turn === id && !g.over && !g.out[id]);
+  }
+
+  function syncUnoSeat(id, i, k, g, dense) {
+    let el = U.seats.get(id);
+    if (!el) {
+      el = elFromHtml(`<div class="useat" data-seat="${id}"><div class="uname"></div><div class="uav"><span class="ini"></span><b class="ucount"></b><span class="uplace"></span></div><div class="ufan"></div></div>`);
+      U.seats.set(id, el);
+    }
+    const p = seatPos(i, k);
+    el.style.left = `${p.x}%`;
+    el.style.top = `${p.y}%`;
+    el.classList.toggle('turn', g.turn === id && !g.over && !g.out[id]);
+    el.classList.toggle('out', !!g.out[id]);
+    el.classList.toggle('dense', dense);
+    setText(el.querySelector('.uname'), nameOf(id));
+    syncUnoAvatar(el.querySelector('.uav'), g, id);
+    const fan = el.querySelector('.ufan');
+    fan.style.transform = `rotate(${p.rot}deg)`;
+    const m = dense ? 0 : Math.min(g.counts[id], 9);
+    while (fan.children.length < m) fan.appendChild(elFromHtml('<i class="card back mini new"></i>'));
+    while (fan.children.length > m) fan.lastElementChild.remove();
+    [...fan.children].forEach((c, j) => { c.style.transform = `rotate(${(j - (m - 1) / 2) * 7}deg)`; });
+    return el;
+  }
+
   function renderUno() {
     const g = S.game;
     const me = S.me;
     const amHost = S.host === me;
     const myOut = g.out[me];
     const myTurn = g.turn === me && !g.over && !myOut;
+    if (!app.querySelector('.table.uno')) buildUno();
+    const first = !U.prev;
+    if (!myTurn) document.querySelectorAll('.modal.cubes').forEach((m) => m.remove()); // ход ушёл — выбор цвета уже не нужен
     const myIdx = g.order.indexOf(me);
     const others = g.order.map((_, i) => g.order[(myIdx + i + 1) % g.order.length]).filter((id) => id !== me);
     const dense = others.length > 5;
-    const place = (id) => { const p = g.places ? g.places.indexOf(id) : g.finished.indexOf(id); return p >= 0 && (g.out[id] === 'finished' || g.places) ? p : -1; };
-    const placeBadge = (id) => { const p = place(id); return p >= 0 && g.out[id] !== 'left' ? (MEDAL[p] ? `<span class="uplace">${MEDAL[p]}</span>` : `<span class="uplace num">${p + 1}</span>`) : (g.out[id] === 'left' ? '<span class="uplace">🚪</span>' : ''); };
 
+    // 1. «до»: позиции карт (вместе с идущими анимациями), затем останавливаем анимации
+    const before = new Map();
+    U.cards.forEach((el, cid) => { before.set(cid, dRect(el)); el.getAnimations().forEach((a) => a.cancel()); });
+    const seatBefore = new Map();
+    U.seats.forEach((el, id) => seatBefore.set(id, dRect(el.querySelector('.uav'))));
+    const pileBefore = dRect($('#drawPile .card'));
+
+    // 2. обновляем DOM на месте
+    const table = app.querySelector('.table.uno');
+    if (U.dir !== g.dir) {
+      U.dir = g.dir;
+      table.querySelector('.orbit').getAnimations().forEach((a) => a.updatePlaybackRate(g.dir)); // плавный разворот кольца
+    }
+    setText(table.querySelector('.orbit span'), g.dir === 1 ? '↻' : '↺');
+    syncOrder($('#uSeats'), others.map((id, i) => syncUnoSeat(id, i, others.length, g, dense)));
+
+    let meBox = U.seats.get(me);
+    if (!meBox) {
+      meBox = elFromHtml(`<div class="mebox" data-seat="${me}"><div class="uav"><span class="ini"></span><b class="ucount"></b><span class="uplace"></span></div><div class="uname"></div></div>`);
+      U.seats.set(me, meBox);
+      $('#uMe').appendChild(meBox);
+    }
+    meBox.classList.toggle('turn', myTurn);
+    meBox.classList.toggle('out', !!myOut);
+    setText(meBox.querySelector('.uname'), nameOf(me));
+    syncUnoAvatar(meBox.querySelector('.uav'), g, me);
+
+    $('#drawPile').classList.toggle('can', myTurn && g.drawn === null);
+    setText($('#drawPile .pcnt'), String(g.drawLeft));
+    const getCard = (c) => { let el = U.cards.get(c.id); if (!el) { el = unoCardEl(c); U.cards.set(c.id, el); } return el; };
+
+    // сброс: несколько последних карт, верхняя крупнее
+    const disc = $('#discard');
+    disc.className = `udisc c-${g.color}`;
+    const live = new Set();
+    const discEls = g.recent.map((c, i) => {
+      const el = getCard(c);
+      live.add(c.id);
+      const top = i === g.recent.length - 1;
+      el.className = `${el.dataset.base} ${top ? 'top' : 'deco'}`;
+      el.style.cssText = top
+        ? `--w:76px;z-index:${i + 1};transform:rotate(-6deg)`
+        : `--w:64px;z-index:${i + 1};transform:translateX(${((c.id * 13) % 24) - 12}px) rotate(${((c.id * 37) % 50) - 25}deg)`;
+      return el;
+    });
+    syncOrder(disc, discEls);
+    const pend = $('#uPend');
+    if (g.pending) { if (pend.textContent !== `+${g.pending}`) { pend.textContent = `+${g.pending}`; pend.hidden = false; pend.animate([{ transform: 'scale(.6)', opacity: 0 }], { duration: 300, easing: FLY_EASE }); } } else pend.hidden = true;
+
+    // рука: веер, помещающийся в ширину экрана
+    const n = g.hand.length;
+    const cw = innerWidth < 420 ? 62 : 72;
+    const step = Math.min(3.2, 22 / Math.max(n, 1));
+    const edge = cw * 1.5 * 1.3 * Math.sin((((n - 1) / 2) * step * Math.PI) / 180) + cw * 0.12;
+    const avail = Math.min(app.clientWidth || innerWidth, 620) - 16 - 2 * edge;
+    const ov = n > 1 ? Math.min(cw - 18, Math.max(10, (n * cw - avail) / (n - 1))) : 0;
+    const handEls = g.hand.map((c, i) => {
+      const el = getCard(c);
+      live.add(c.id);
+      const off = i - (n - 1) / 2;
+      const ok = g.playable.includes(c.id);
+      el.className = `${el.dataset.base} ${ok ? 'ok' : (myTurn ? 'no' : '')}`;
+      el.style.cssText = `--w:${cw}px;--rot:${(off * step).toFixed(1)}deg;--ty:${(off * off * 0.9).toFixed(1)}px;margin-left:${i ? -ov : 0}px`;
+      return el;
+    });
+    syncOrder($('#uHand'), handEls);
+    $('#uHand').classList.toggle('out', !!myOut);
+    for (const [cid, el] of [...U.cards]) if (!live.has(cid)) { U.cards.delete(cid); el.remove(); }
+
+    // статус, плашки, кнопки — пересобираются только при изменении
     let status;
     if (g.over) status = 'Партия окончена';
     else if (myOut === 'finished') status = `Вы выиграли! Место ${g.finished.indexOf(me) + 1}. Смотрите дальше`;
@@ -835,129 +1043,85 @@
     else if (myTurn && g.pending) status = `Положите плюс или возьмите ${g.pending}`;
     else if (myTurn) status = 'Ваш ход';
     else status = `Ходит ${nameOf(g.turn)}`;
+    setText($('#uStatus .txt'), status);
+    $('#uStatus').classList.toggle('mine', myTurn);
+    const bannerKey = myTurn && g.drawn !== null ? `d${g.drawn}` : '';
+    if (bannerKey !== U.bannerKey) {
+      U.bannerKey = bannerKey;
+      $('#uBanner').innerHTML = bannerKey ? `<div class="cbanner"><span>Выпала подходящая карта</span>
+        <button class="btn red" id="uPlay">Сходить</button><button class="btn blue" id="uPass">Оставить</button></div>` : '';
+    }
+    const actionsKey = g.canFinish ? 'finish' : '';
+    if (actionsKey !== U.actionsKey) {
+      U.actionsKey = actionsKey;
+      $('#uActions').innerHTML = actionsKey ? '<button class="btn ghost small" id="uFinish">Закончить игру</button>' : '';
+    }
+    $('#uUno').hidden = g.over || !!myOut;
+    const resultKey = g.over ? JSON.stringify([g.places, amHost]) : '';
+    if (resultKey !== U.resultKey) {
+      U.resultKey = resultKey;
+      $('#uResult').innerHTML = g.over ? `
+        <div class="uresult"><h3>🏁 Итоги</h3>
+          <ol>${(g.places || []).map((id, i) => `<li class="${id === me ? 'me' : ''}"><span>${MEDAL[i] || (i + 1) + '.'}</span> ${esc(nameOf(id))}${g.out[id] === 'left' ? ' <small>(вышел)</small>' : g.out[id] === 'finished' ? '' : ` <small>(карт: ${g.counts[id]})</small>`}</li>`).join('')}</ol>
+          ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём создателя…</span>'}
+        </div>` : '';
+    }
 
-    const seat = (id, i) => {
-      const n = g.counts[id];
-      const p = seatPos(i, others.length);
-      const nm = nameOf(id);
-      const turn = g.turn === id && !g.over && !g.out[id];
-      const m = Math.min(n, 9);
-      const fan = dense ? '' : Array.from({ length: m }, (_, j) => `<i class="card back mini" style="transform:rotate(${(j - (m - 1) / 2) * 7}deg)"></i>`).join('');
-      return `<div class="useat ${turn ? 'turn' : ''} ${g.out[id] ? 'out' : ''} ${dense ? 'dense' : ''}" style="left:${p.x}%;top:${p.y}%" data-seat="${id}">
-        <div class="uname">${esc(nm)}</div>
-        <div class="uav ${turn ? 'ring' : ''}" style="background:${avatarColor(nm)}">${esc(nm.slice(0, 1).toUpperCase())}<b class="ucount ${g.called[id] && n === 1 ? 'uno' : ''}">${n}</b>${placeBadge(id)}</div>
-        <div class="ufan" style="transform:rotate(${p.rot}deg)">${fan}</div>
-      </div>`;
-    };
-
-    // рука: веер карт, помещающийся в ширину экрана
-    const n = g.hand.length;
-    const cw = innerWidth < 420 ? 62 : 72;
-    const step = Math.min(3.2, 22 / Math.max(n, 1));
-    const edge = cw * 1.5 * 1.3 * Math.sin((((n - 1) / 2) * step * Math.PI) / 180) + cw * 0.12; // на сколько веер выступает по краям
-    const avail = Math.min(app.clientWidth || innerWidth, 620) - 16 - 2 * edge;
-    const ov = n > 1 ? Math.min(cw - 18, Math.max(10, (n * cw - avail) / (n - 1))) : 0;
-    const handHtml = g.hand.map((c, i) => {
-      const off = i - (n - 1) / 2;
-      const ok = g.playable.includes(c.id);
-      return cardHtml(c, `${ok ? 'ok' : (myTurn ? 'no' : '')}`, `data-id="${c.id}" data-cid="${c.id}" style="--w:${cw}px;--rot:${(off * step).toFixed(1)}deg;--ty:${(off * off * 0.9).toFixed(1)}px;margin-left:${i ? -ov : 0}px"`);
-    }).join('');
-
-    const recent = g.recent.slice(0, -1).map((c) => `<div class="udeco" style="--r:${((c.id * 37) % 50) - 25}deg;--dx:${((c.id * 13) % 24) - 12}px">${cardHtml(c, '', 'style="--w:64px"')}</div>`).join('');
-    const myName = nameOf(me);
-    const resultHtml = g.over ? `
-      <div class="uresult"><h3>🏁 Итоги</h3>
-        <ol>${(g.places || []).map((id, i) => `<li class="${id === me ? 'me' : ''}"><span>${MEDAL[i] || (i + 1) + '.'}</span> ${esc(nameOf(id))}${g.out[id] === 'left' ? ' <small>(вышел)</small>' : g.out[id] === 'finished' ? '' : ` <small>(карт: ${g.counts[id]})</small>`}</li>`).join('')}</ol>
-        ${amHost ? '<button class="btn" id="again">В лобби</button>' : '<span class="waitmsg">Ждём создателя…</span>'}
-      </div>` : '';
-
-    app.innerHTML = `
-      <div class="table uno ${g.dir === 1 ? 'cw' : 'ccw'}">
-        <div class="rays"></div>
-        <div class="orbit"><span>${g.dir === 1 ? '↻' : '↺'}</span></div>
-        ${others.map(seat).join('')}
-        <div class="ucenter">
-          <div class="upile ${myTurn && g.drawn === null ? 'can' : ''}" id="drawPile">
-            <div class="card back" style="--w:62px"></div><b class="pcnt">${g.drawLeft}</b>
-          </div>
-          <div class="udisc c-${g.color}" id="discard">${recent}<div class="utop">${cardHtml(g.top, 'top', `data-cid="${g.top.id}" style="--w:76px"`)}</div></div>
-          ${g.pending ? `<div class="upend">+${g.pending}</div>` : ''}
-        </div>
-        ${myTurn && g.drawn !== null ? `<div class="cbanner"><span>Выпала подходящая карта</span>
-          <button class="btn red" id="uPlay">Сходить</button><button class="btn blue" id="uPass">Оставить</button></div>` : ''}
-        <div class="ustatus ${myTurn ? 'mine' : ''}">${esc(status)}<span id="uTimerTxt"></span></div>
-        <div class="ustrip">
-          <div class="mebox ${myTurn ? 'turn' : ''} ${myOut ? 'out' : ''}" data-seat="${me}">
-            <div class="uav ${myTurn ? 'ring' : ''}" style="background:${avatarColor(myName)}">${esc(myName.slice(0, 1).toUpperCase())}<b class="ucount">${n}</b>${placeBadge(me)}</div>
-            <div class="uname">${esc(myName)}</div>
-          </div>
-          <div class="uactions">
-            ${g.canFinish ? '<button class="btn ghost small" id="uFinish">Закончить игру</button>' : ''}
-          </div>
-          ${!g.over && !myOut ? '<button class="unobtn" id="uUno" aria-label="УНО"><span>UNO!</span></button>' : '<span></span>'}
-        </div>
-        <div class="uhand ${myOut ? 'out' : ''}">${handHtml}</div>
-        ${resultHtml}
-      </div>`;
-
-    // раскладка после отрисовки — до запуска анимаций
-    const R = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
-    const now = { cards: new Map(), seats: new Map(), pile: R($('#drawPile .card')), disc: R($('#discard')) };
-    app.querySelectorAll('[data-cid]').forEach((el) => now.cards.set(el.dataset.cid, R(el)));
-    app.querySelectorAll('[data-seat] .uav').forEach((el) => now.seats.set(el.parentElement.dataset.seat, R(el)));
-    animateUno(uLayout, now, g);
-    uLayout = { cards: now.cards, counts: { ...g.counts }, turn: g.turn };
+    // 3. «после» и перелёты
+    const after = new Map();
+    U.cards.forEach((el, cid) => after.set(cid, dRect(el)));
+    const seatAfter = new Map();
+    U.seats.forEach((el, id) => seatAfter.set(id, dRect(el.querySelector('.uav'))));
+    const pileAfter = dRect($('#drawPile .card'));
+    if (!REDUCED) flightsUno({ g, first, before, after, seatBefore, seatAfter, pile: first ? pileAfter : pileBefore });
+    U.prev = { counts: { ...g.counts }, turn: g.turn };
     startUnoTimer();
-
-    const act = (a) => emit('game:action', a);
-    app.querySelectorAll('.uhand .card.ok').forEach((el) => {
-      el.onclick = () => {
-        const id = Number(el.dataset.id);
-        const card = g.hand.find((c) => c.id === id);
-        if (card.color === 'w') pickColor((color) => act({ type: 'play', cardId: id, color }));
-        else act({ type: 'play', cardId: id });
-      };
-    });
-    const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-    bind('#drawPile', () => { if (myTurn && g.drawn === null) act({ type: 'draw' }); });
-    bind('#uUno', () => act({ type: 'uno' }));
-    bind('#uPass', () => act({ type: 'pass' }));
-    bind('#uPlay', () => {
-      const card = g.hand.find((c) => c.id === g.drawn);
-      if (!card) return;
-      if (card.color === 'w') pickColor((color) => act({ type: 'play', cardId: card.id, color }));
-      else act({ type: 'play', cardId: card.id });
-    });
-    bind('#uFinish', async () => { if (await confirmBox({ title: 'Закончить игру?', text: 'Партия завершится сейчас, места распределятся по текущему положению.', ok: 'Закончить', cancel: 'Продолжить' })) act({ type: 'finish' }); });
-    bind('#again', () => emit('room:lobby'));
   }
 
-  // Полёт карт: из руки на стол, от соперника в центр, из колоды в руку/к сопернику
-  function animateUno(prev, now, g) {
-    if (REDUCED) return;
-    const seatRect = (id) => now.seats.get(id) || now.pile;
+  function flightsUno({ g, first, before, after, seatBefore, seatAfter, pile }) {
+    const prev = U.prev;
+    const seatFrom = (id) => seatBefore.get(id) || seatAfter.get(id) || pile;
     const played = [];
     if (prev) for (const id of g.order) { if (id === S.me) continue; for (let k = (prev.counts[id] || 0) - g.counts[id]; k > 0; k--) played.push(id); }
     let deal = 0;
-    app.querySelectorAll('[data-cid]').forEach((el) => {
-      const nr = now.cards.get(el.dataset.cid);
-      const old = prev && prev.cards.get(el.dataset.cid);
+    U.cards.forEach((el, cid) => {
+      const to = after.get(cid);
+      const old = before.get(cid);
       let from = null; let delay = 0;
-      if (old) { if (Math.abs(old.left - nr.left) < 2 && Math.abs(old.top - nr.top) < 2) return; from = old; }
-      else if (!prev) { from = now.pile; delay = deal++ * 60; }
-      else if (el.closest('.uhand')) from = now.pile;
-      else from = seatRect(played.shift() || (prev && g.order[(g.order.indexOf(g.turn) + g.order.length - g.dir) % g.order.length]));
+      if (old) {
+        if (Math.abs(old.left - to.left) < 1 && Math.abs(old.top - to.top) < 1 && Math.abs(old.width - to.width) < 1) return;
+        from = old;
+      } else if (first) { from = pile; delay = (el.closest('#uHand') ? deal++ : 0) * STAGGER_MS; }
+      else if (el.closest('#uHand')) { from = pile; delay = deal++ * STAGGER_MS; }
+      else from = seatFrom(played.shift() || (prev && prev.turn));
       if (!from) return;
-      const dx = (from.left + from.width / 2) - (nr.left + nr.width / 2);
-      const dy = (from.top + from.height / 2) - (nr.top + nr.height / 2);
-      el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / nr.width})`, opacity: 0.85 }],
-        { duration: 420, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' });
+      const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
+      const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
+      const z0 = el.style.zIndex; // в сбросе у карт свой порядок наложения — вернём его после полёта
+      el.style.zIndex = 60;
+      const done = () => { el.style.zIndex = z0; };
+      let a;
+      if (old) {
+        a = el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / to.width})` }], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+      } else {
+        // новая карта вылетает рубашкой вверх и к концу полёта открывается (приём из projeckt_one)
+        a = el.animate([
+          { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(.5) rotate(-16deg)` },
+          { opacity: 1, offset: 0.15 },
+        ], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+        const cv = document.createElement('i');
+        cv.className = 'ucover';
+        el.appendChild(cv);
+        cv.animate([{ opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
+      }
+      a.onfinish = a.oncancel = done;
     });
     if (!prev) return;
+    // соперники берут карты из колоды
     g.order.forEach((id) => {
       if (id === S.me) return;
       const inc = g.counts[id] - (prev.counts[id] || 0);
-      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="card back"></div>', now.pile, seatRect(id), 150 + k * 70, 30);
+      for (let k = 0; k < Math.min(inc, 6); k++) flyGhost('<div class="card back"></div>', cardAt(pile, 30), cardAt(seatAfter.get(id) || pile, 30), k * STAGGER_MS);
     });
   }
 
@@ -1020,6 +1184,13 @@
     if (await confirmBox({ title, text })) leave();
   }
   $('#exitBtn').onclick = askLeave;
+
+  // поворот телефона / смена размера окна: веер карт и раскладку пересчитываем сразу, а не на следующем ходе
+  let resizeT = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => { if (S && S.phase !== 'lobby' && S.game && (S.gameId === 'uno' || S.gameId === 'durak')) renderGame(); }, 200);
+  });
 
   // старт
   renderHome();
