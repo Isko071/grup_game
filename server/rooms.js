@@ -79,14 +79,15 @@ class Room {
       // в лобби место освобождается после паузы: игрок мог просто свернуть вкладку или перезагрузить страницу
       setTimeout(() => {
         const q = this.byId(id);
-        if (q && !q.connected && this.phase === 'lobby') { this.removePlayer(id); this.touch(); this.broadcast(); }
+        // старый таймер от прошлого обрыва не должен выкинуть игрока раньше времени
+        if (q && !q.connected && this.phase === 'lobby' && Date.now() - q.offAt >= LOBBY_GRACE_MS - 50) { this.removePlayer(id); this.touch(); this.broadcast(); }
       }, LOBBY_GRACE_MS).unref?.();
     }
     if (this.hostId === id) {
       // создатель передаётся, только если он не вернулся за отведённое время
       setTimeout(() => {
         const q = this.byId(id);
-        if (this.hostId === id && q && !q.connected && this.connectedHumans.length > 0) { this.reassignHost(); this.broadcast(); }
+        if (this.hostId === id && q && !q.connected && Date.now() - q.offAt >= HOST_GRACE_MS - 50 && this.connectedHumans.length > 0) { this.reassignHost(); this.broadcast(); }
       }, HOST_GRACE_MS).unref?.();
     }
     if (this.connectedHumans.length === 0) this.startEmptyTimer();
@@ -106,7 +107,7 @@ class Room {
   start() {
     const g = registry.games[this.gameId];
     if (!g) return 'Игра недоступна';
-    if (this.players.length < g.meta.minPlayers) return `Нужно минимум ${g.meta.minPlayers} игрока`;
+    if (this.players.length < g.meta.minPlayers) return `Нужно минимум ${g.meta.minPlayers} ${g.meta.minPlayers < 5 ? 'игрока' : 'игроков'}`;
     if (this.players.length > g.meta.maxPlayers) return `Максимум ${g.meta.maxPlayers} игроков`;
     if (!g.meta.supportsBots && this.players.some((p) => p.bot)) return 'В этой игре нет ботов — уберите их из комнаты';
     const bad = g.validate && g.validate(this.players, { ...g.meta.defaultRules, ...this.rules });
@@ -157,11 +158,14 @@ class Room {
     this.deadline = Date.now() + sec * 1000;
     this.turnTimer = setTimeout(() => {
       this.turnTimer = null;
-      if (this.phase !== 'playing') return;
-      const a = g.timeoutMove(this.game, pid);
-      if (!a) return;
-      const res = this.act(pid, a);
-      if (!res.error) { this.pushChat(null, `${pl.name}: время вышло`); this.broadcast(res.sound); }
+      try {
+        if (this.phase !== 'playing') return;
+        const a = g.timeoutMove(this.game, pid);
+        if (!a) return;
+        const res = this.act(pid, a);
+        if (!res.error) { this.pushChat(null, `${pl.name}: время вышло`); this.broadcast(res.sound); }
+        else { this.turnKey = null; this.scheduleTurnTimer(); }
+      } catch (e) { console.error('turn timer', e); }
     }, sec * 1000);
     this.turnTimer.unref?.();
   }
@@ -173,20 +177,30 @@ class Room {
     const bots = this.players.filter((p) => p.bot);
     if (!bots.length) return;
     this.botTimer = setTimeout(() => {
-      if (this.phase !== 'playing') return;
-      for (const b of bots) {
-        const a = g.botMove(this.game, b.id);
-        if (a) {
+      try {
+        if (this.phase !== 'playing') return;
+        for (const b of bots) {
+          const a = g.botMove(this.game, b.id);
+          if (!a) continue;
           const res = this.act(b.id, a);
+          if (res.error) { console.error('bot move rejected', b.id, a, res.error); continue; } // пробуем следующего бота
           this.broadcast(res.sound);
           return;
         }
-      }
+      } catch (e) { console.error('bot', e); }
     }, BOT_DELAY_MS);
     this.botTimer.unref?.();
   }
 
   // Игрок вышел посреди игры: игры без ботов убирают его из партии, остальные отдают его место боту
+  // Осознанный выход (кнопка «Выйти»): в отличие от обрыва связи, роль создателя передаётся сразу
+  leave(id) {
+    if (this.phase === 'lobby') this.removePlayer(id);
+    else if (this.phase === 'playing') this.leaveInGame(id);
+    else { this.markDisconnected(id); const p = this.byId(id); if (p) p.token = null; }
+    if (this.hostId === id) this.reassignHost();
+  }
+
   leaveInGame(id) {
     const p = this.byId(id);
     if (!p || p.bot) return;

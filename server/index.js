@@ -21,6 +21,14 @@ io.on('connection', (socket) => {
   let room = null;
   let me = null;
 
+  // тот же игрок зашёл с другого устройства/вкладки: старое соединение больше не управляет им
+  const kickOld = (p) => {
+    if (!p.socketId || p.socketId === socket.id) return;
+    const old = io.sockets.sockets.get(p.socketId);
+    io.to(p.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства', other: true });
+    if (old) setTimeout(() => old.disconnect(true), 200);
+  };
+
   const attach = (r, p) => {
     room = r; me = p;
     p.connected = true;
@@ -37,7 +45,7 @@ io.on('connection', (socket) => {
     const r = rooms.get(auth.code);
     const known = r && r.byToken(auth.token);
     if (known) {
-      if (known.socketId && known.socketId !== socket.id) io.to(known.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства' });
+      kickOld(known);
       const longOff = known.offAt && Date.now() - known.offAt > 20000;
       attach(r, known);
       if (longOff) r.pushChat(null, `${known.name} вернулся`);
@@ -76,7 +84,7 @@ io.on('connection', (socket) => {
     // возвращение по токену — реконнект
     const known = r.byToken(p.token);
     if (known) {
-      if (known.socketId && known.socketId !== socket.id) io.to(known.socketId).emit('kicked', { reason: 'Вы зашли с другого устройства' });
+      kickOld(known);
       const longOff = known.offAt && Date.now() - known.offAt > 20000;
       attach(r, known);
       if (longOff) r.pushChat(null, `${known.name} вернулся`);
@@ -135,7 +143,11 @@ io.on('connection', (socket) => {
     if (room.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     const t = room.byId(p.id);
     if (!t || t.id === me.id) return ack({ error: 'Нельзя' });
-    if (t.socketId) io.to(t.socketId).emit('kicked', { reason: 'Создатель убрал вас из комнаты' });
+    if (t.socketId) {
+      io.to(t.socketId).emit('kicked', { reason: 'Создатель убрал вас из комнаты' });
+      const s = io.sockets.sockets.get(t.socketId); // старое соединение больше не должно писать в чат комнаты
+      if (s) setTimeout(() => s.disconnect(true), 200);
+    }
     room.removePlayer(t.id);
     ack({ ok: true });
     room.broadcast();
@@ -184,9 +196,7 @@ io.on('connection', (socket) => {
     const r = room, id = me.id, name = me.name;
     socket.leave(r.code);
     room = null; me = null;
-    if (r.phase === 'lobby') r.removePlayer(id);
-    else if (r.phase === 'playing') r.leaveInGame(id);
-    else r.markDisconnected(id);
+    r.leave(id);
     r.pushChat(null, `${name} вышел`);
     r.touch();
     r.broadcast();
@@ -200,6 +210,10 @@ io.on('connection', (socket) => {
     room.broadcast();
   });
 });
+
+// Ошибка в одном обработчике не должна ронять сервер вместе со всеми комнатами
+process.on('uncaughtException', (e) => console.error('uncaught', e));
+process.on('unhandledRejection', (e) => console.error('unhandled', e));
 
 if (require.main === module) {
   server.listen(PORT, () => console.log(`Карточный круг: http://localhost:${PORT}`));

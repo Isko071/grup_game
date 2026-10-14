@@ -516,3 +516,16 @@ button:not(:disabled):active{transform:scale(.97)}
 /* подсказок нет: карты всегда выглядят одинаково и нажимаются любые */
 .dhand .pcard{cursor:pointer;filter:none}
 .dtable .pair{cursor:pointer}
+
+/* ======== УНО: постоянная раскладка ======== */
+[hidden]{display:none!important}
+.udisc .card{position:absolute;left:50%;top:50%;margin-left:calc(var(--w)/-2);margin-top:calc(var(--w)*-.75);will-change:transform}
+.udisc .card.deco{opacity:.92}
+.uhand .card{will-change:transform}
+/* рубашка УНО поверх карты, пока она летит «закрытой» */
+.card .ucover{position:absolute;inset:0;border-radius:inherit;background:#111;z-index:3;pointer-events:none;overflow:hidden}
+.card .ucover::before{content:"";position:absolute;left:8%;right:8%;top:14%;bottom:14%;border-radius:50%;background:var(--c-r);transform:rotate(-28deg)}
+.useat{transition:left .6s cubic-bezier(.22,.8,.3,1),top .6s cubic-bezier(.22,.8,.3,1),opacity .3s}
+.card.mini.new{animation:fadein .4s ease-out}
+@keyframes fadein{from{opacity:0}}
+.ustatus .txt{transition:color .3s}

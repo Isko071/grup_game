@@ -312,3 +312,12 @@ test('бот УНО: ловит забывших, бережёт дикие, б�
   const mw = uno.botMove(w, 'p1');
   assert.deepStrictEqual([mw.type, mw.color], ['play', 'y']);
 });
+
+test('таймер: ключ хода меняется, даже если ход вернулся тому же игроку («пропуск» вдвоём)', () => {
+  const st = fresh(2);
+  st.hands.p0 = [card(1, 'r', 'skip'), card(2, 'r', '1')];
+  const k1 = uno.turnKey(st);
+  uno.act(st, 'p0', { type: 'play', cardId: 1 });
+  assert.strictEqual(cur(st), 'p0'); // снова ходит p0
+  assert.notStrictEqual(uno.turnKey(st), k1); // но таймер должен начаться заново
+});
