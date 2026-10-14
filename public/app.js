@@ -449,7 +449,7 @@
       const cv = document.createElement('i');
       cv.className = 'cover';
       card.appendChild(cv);
-      cv.animate([{ opacity: 0, offset: 0.3 }, { opacity: 1, offset: 0.6 }], { duration: dur, delay, easing: 'linear', fill: 'both' });
+      cv.animate([{ opacity: 0, offset: 0 }, { opacity: 0, offset: 0.3 }, { opacity: 1, offset: 0.6 }, { opacity: 1, offset: 1 }], { duration: dur, delay, easing: 'linear', fill: 'both' });
     }
     const a = g.animate([{ transform: 'none', opacity: 1 }, { transform: end, opacity: 1, offset: 0.85 }, { transform: end, opacity: 0 }],
       { duration: dur, delay, easing: FLY_EASE, fill: 'both' });
@@ -458,6 +458,25 @@
 
   // прямоугольник карты шириной w с центром в центре r (для призраков, вылетающих из колоды или аватара)
   const cardAt = (r, w) => ({ left: r.left + r.width / 2 - w / 2, top: r.top + r.height / 2 - (w * 1.4) / 2, width: w, height: w * 1.4 });
+  // Снимок карты для плавного перелёта: где её центр на экране, как она сейчас повёрнута/масштабирована
+  // (включая идущую анимацию) и какого она размера без трансформаций
+  function cardSnap(el) {
+    const r = el.getBoundingClientRect();
+    const t = getComputedStyle(el).transform;
+    const m = new DOMMatrixReadOnly(t && t !== 'none' ? t : undefined);
+    return { left: r.left, top: r.top, width: r.width, height: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: el.offsetWidth || r.width, m };
+  }
+  // Начальный кадр перелёта: карта выглядит ровно так, как выглядела до хода (место, наклон, размер),
+  // а дальше браузер плавно ведёт её к новому месту и наклону. Работает при transform-origin в центре карты.
+  function flipStart(old, now) {
+    const s = old.w / now.w;
+    const tx = old.cx - (now.cx - now.m.e);
+    const ty = old.cy - (now.cy - now.m.f);
+    return `matrix(${old.m.a * s},${old.m.b * s},${old.m.c * s},${old.m.d * s},${tx},${ty})`;
+  }
+  const sameSnap = (a, b) => Math.abs(a.cx - b.cx) < 1 && Math.abs(a.cy - b.cy) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;
+  // откуда «вылетает» новая карта: смещение от центра источника до места карты без её собственной трансформации
+  const enterFrom = (src, now) => `translate(${src.left + src.width / 2 - (now.cx - now.m.e)}px,${src.top + src.height / 2 - (now.cy - now.m.f)}px) scale(.5) rotate(-16deg)`;
   const dRect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
   const elFromHtml = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   function syncOrder(container, els) {
@@ -557,7 +576,7 @@
     const before = new Map();
     const beforeHtml = new Map();
     D.cards.forEach((el, cid) => {
-      before.set(cid, dRect(el));
+      before.set(cid, cardSnap(el));
       if (el.closest('.pair')) beforeHtml.set(cid, el.cloneNode(true).outerHTML.replace(/ data-cid="\d+"| data-id="\d+"/g, ''));
       el.getAnimations().forEach((a) => a.cancel());
     });
@@ -659,7 +678,7 @@
 
     // 3. замеры «после» и плавные перелёты
     const after = new Map();
-    D.cards.forEach((el, cid) => after.set(cid, dRect(el)));
+    D.cards.forEach((el, cid) => after.set(cid, cardSnap(el)));
     const seatAfter = new Map();
     D.seats.forEach((el, id) => seatAfter.set(id, dRect(el.querySelector('.avatar'))));
     const deckAfter = dRect($('#deckbox'));
@@ -685,31 +704,29 @@
       const old = before.get(cid);
       let from = null; let delay = 0;
       if (old) {
-        if (Math.abs(old.left - to.left) < 1 && Math.abs(old.top - to.top) < 1 && Math.abs(old.width - to.width) < 1) return;
+        if (sameSnap(old, to)) return;
         from = old;
       } else if (first) { from = deckBefore; delay = deal++ * STAGGER_MS; }
       else if (el.parentNode && el.parentNode.id === 'dHand') from = deckBefore;
       else from = seatFrom(played.shift() || g.attacker);
       if (!from) return;
-      const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
-      const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
       el.style.zIndex = 60;
       const done = () => { el.style.zIndex = ''; };
       let a;
       if (old) {
         // карта уже была на экране: плавно переезжает на новое место
-        a = el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / to.width})` }],
+        a = el.animate([{ transform: flipStart(old, to), offset: 0 }],
           { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
       } else {
         // новая карта вылетает рубашкой вверх (из колоды или от соперника) и к концу полёта «открывается»
         a = el.animate([
-          { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(.5) rotate(-16deg)` },
+          { opacity: 0, transform: enterFrom(from, to), offset: 0 },
           { opacity: 1, offset: 0.15 },
         ], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
         const cv = document.createElement('i');
         cv.className = 'cover';
         el.appendChild(cv);
-        cv.animate([{ opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
+        cv.animate([{ opacity: 1, offset: 0 }, { opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }, { opacity: 0, offset: 1 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
       }
       a.onfinish = a.oncancel = done;
     });
@@ -968,7 +985,7 @@
 
     // 1. «до»: позиции карт (вместе с идущими анимациями), затем останавливаем анимации
     const before = new Map();
-    U.cards.forEach((el, cid) => { before.set(cid, dRect(el)); el.getAnimations().forEach((a) => a.cancel()); });
+    U.cards.forEach((el, cid) => { before.set(cid, cardSnap(el)); el.getAnimations().forEach((a) => a.cancel()); });
     const seatBefore = new Map();
     U.seats.forEach((el, id) => seatBefore.set(id, dRect(el.querySelector('.uav'))));
     const pileBefore = dRect($('#drawPile .card'));
@@ -1013,7 +1030,7 @@
     });
     syncOrder(disc, discEls);
     const pend = $('#uPend');
-    if (g.pending) { if (pend.textContent !== `+${g.pending}`) { pend.textContent = `+${g.pending}`; pend.hidden = false; pend.animate([{ transform: 'scale(.6)', opacity: 0 }], { duration: 300, easing: FLY_EASE }); } } else pend.hidden = true;
+    if (g.pending) { if (pend.textContent !== `+${g.pending}`) { pend.textContent = `+${g.pending}`; pend.hidden = false; pend.animate([{ transform: 'scale(.6)', opacity: 0, offset: 0 }], { duration: 300, easing: FLY_EASE }); } } else pend.hidden = true;
 
     // рука: веер, помещающийся в ширину экрана
     const n = g.hand.length;
@@ -1069,7 +1086,7 @@
 
     // 3. «после» и перелёты
     const after = new Map();
-    U.cards.forEach((el, cid) => after.set(cid, dRect(el)));
+    U.cards.forEach((el, cid) => after.set(cid, cardSnap(el)));
     const seatAfter = new Map();
     U.seats.forEach((el, id) => seatAfter.set(id, dRect(el.querySelector('.uav'))));
     const pileAfter = dRect($('#drawPile .card'));
@@ -1089,30 +1106,28 @@
       const old = before.get(cid);
       let from = null; let delay = 0;
       if (old) {
-        if (Math.abs(old.left - to.left) < 1 && Math.abs(old.top - to.top) < 1 && Math.abs(old.width - to.width) < 1) return;
+        if (sameSnap(old, to)) return;
         from = old;
       } else if (first) { from = pile; delay = (el.closest('#uHand') ? deal++ : 0) * STAGGER_MS; }
       else if (el.closest('#uHand')) { from = pile; delay = deal++ * STAGGER_MS; }
       else from = seatFrom(played.shift() || (prev && prev.turn));
       if (!from) return;
-      const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
-      const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
       const z0 = el.style.zIndex; // в сбросе у карт свой порядок наложения — вернём его после полёта
       el.style.zIndex = 60;
       const done = () => { el.style.zIndex = z0; };
       let a;
       if (old) {
-        a = el.animate([{ transform: `translate(${dx}px,${dy}px) scale(${from.width / to.width})` }], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
+        a = el.animate([{ transform: flipStart(old, to), offset: 0 }], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
       } else {
         // новая карта вылетает рубашкой вверх и к концу полёта открывается (приём из projeckt_one)
         a = el.animate([
-          { opacity: 0, transform: `translate(${dx}px,${dy}px) scale(.5) rotate(-16deg)` },
+          { opacity: 0, transform: enterFrom(from, to), offset: 0 },
           { opacity: 1, offset: 0.15 },
         ], { duration: FLY_MS, delay, easing: FLY_EASE, fill: 'backwards' });
         const cv = document.createElement('i');
         cv.className = 'ucover';
         el.appendChild(cv);
-        cv.animate([{ opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
+        cv.animate([{ opacity: 1, offset: 0 }, { opacity: 1, offset: 0.6 }, { opacity: 0, offset: 0.8 }, { opacity: 0, offset: 1 }], { duration: FLY_MS, delay, easing: 'linear', fill: 'both' }).onfinish = () => cv.remove();
       }
       a.onfinish = a.oncancel = done;
     });
