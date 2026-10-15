@@ -167,7 +167,7 @@
   });
 
   // В дураке между изменениями на столе держим паузу в секунду: иначе ходы (особенно ботов) мелькают слишком резко
-  const DURAK_GAP = 1100;
+  const DURAK_GAP = 1400;
   let dQueue = [];
   let dTimer = null;
   let dLastAt = 0;
@@ -476,9 +476,9 @@
   // переезжает (рука → стол → бито/рука взявшего). Поэтому нет мерцания и «перезапуска» анимаций.
   const D = { cards: new Map(), seats: new Map(), pairs: new Map(), prev: null, deckKey: '', discKey: '' };
   // темп и кривая — как в раздаче карт в projeckt_one: спокойно, с мягким замедлением; карты вылетают по очереди
-  const FLY_MS = 750;
-  const FLY_EASE = 'cubic-bezier(.22,.8,.3,1)';
-  const STAGGER_MS = 160;
+  const FLY_MS = 1000;
+  const FLY_EASE = 'cubic-bezier(.35,.05,.2,1)'; // мягкий разгон и мягкое торможение
+  const STAGGER_MS = 200;
 
   // Призрак карты, летящий из одного места в другое (для карт, которых уже нет на экране)
   function flyGhost(html, from, to, delay = 0, w) {
