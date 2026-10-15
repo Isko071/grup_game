@@ -15,14 +15,31 @@ function game(roles, rules = {}) {
 }
 const night = (st, pid, target) => mafia.act(st, pid, { type: 'night', target }, ctx);
 
-test('раздача ролей: 1 мафия на 5, доктор, комиссар; маньяк с 7 игроков', () => {
+test('раздача ролей по умолчанию: мафия — каждый третий, доктор, комиссар, маньяка нет', () => {
   const count = (st) => Object.values(st.roles).reduce((m, r) => ({ ...m, [r]: (m[r] || 0) + 1 }), {});
-  const c5 = count(mafia.create(P(5), {}, Math.random, ctx));
-  assert.deepStrictEqual([c5.mafia, c5.doctor, c5.commissar, c5.civil, c5.maniac], [1, 1, 1, 2, undefined]);
+  const c4 = count(mafia.create(P(4), {}, Math.random, ctx));
+  assert.deepStrictEqual([c4.mafia, c4.doctor, c4.commissar, c4.civil, c4.maniac], [1, 1, 1, 1, undefined]);
   const c9 = count(mafia.create(P(9), {}, Math.random, ctx));
-  assert.deepStrictEqual([c9.mafia, c9.maniac, c9.civil], [3, 1, 3]);
-  const off = count(mafia.create(P(9), { maniac: false }, Math.random, ctx));
-  assert.strictEqual(off.maniac, undefined);
+  assert.deepStrictEqual([c9.mafia, c9.maniac, c9.civil], [3, undefined, 4]);
+});
+
+test('создатель сам задаёт состав: число мафий, доктор, комиссар, маньяк', () => {
+  const count = (st) => Object.values(st.roles).reduce((m, r) => ({ ...m, [r]: (m[r] || 0) + 1 }), {});
+  const c = count(mafia.create(P(8), { mafiaCount: 2, doctor: false, commissar: true, maniac: true }, Math.random, ctx));
+  assert.deepStrictEqual([c.mafia, c.doctor, c.commissar, c.maniac, c.civil], [2, undefined, 1, 1, 4]);
+  const only = count(mafia.create(P(5), { mafiaCount: 1, doctor: false, commissar: false }, Math.random, ctx));
+  assert.deepStrictEqual([only.mafia, only.civil], [1, 4]);
+});
+
+test('онлайн от 4 игроков; нечестный состав не даёт начать', () => {
+  assert.strictEqual(mafia.meta.minPlayers, 4);
+  assert.strictEqual(mafia.validate(P(4), {}), null);
+  assert.ok(mafia.validate(P(3), {}));
+  assert.ok(mafia.validate(P(4), { mafiaCount: 2 })); // 2 мафии из 4 — половина
+  assert.strictEqual(mafia.validate(P(5), { mafiaCount: 2 }), null);
+  assert.strictEqual(mafia.validate(P(4), { mafiaCount: 1, doctor: true, commissar: true, maniac: true }), null); // все роли, мирных нет — можно
+  assert.ok(mafia.preview(P(4), {}).ok);
+  assert.ok(!mafia.preview(P(4), { mafiaCount: 3 }).ok);
 });
 
 test('ночь закрывается сама, когда все с ночными ролями сходили', () => {
@@ -140,8 +157,8 @@ test('режим с ведущим: ведущий не играет, видит
   assert.strictEqual(mafia.view(st, 'p3', ctx).phase, 'day');
   mafia.act(st, 'p0', { type: 'endGame' }, ctx);
   assert.ok(mafia.isOver(st));
-  assert.ok(mafia.validate(P(5), { mode: 'live' }));
-  assert.strictEqual(mafia.validate(P(6), { mode: 'live' }), null);
+  assert.ok(mafia.validate(P(4), { mode: 'live' })); // 3 играющих + ведущий — мало
+  assert.strictEqual(mafia.validate(P(5), { mode: 'live' }), null); // 4 играющих + ведущий
 });
 
 test('мафия без ботов', () => {
@@ -175,7 +192,7 @@ test('выход последней мафии — победа мирных; в
 
 test('партии без ботов доигрываются до конца (игроки ходят случайно)', () => {
   const rnd = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  for (const n of [5, 6, 7, 9, 12, 15]) {
+  for (const n of [4, 5, 6, 7, 9, 12, 15]) {
     for (let g = 0; g < 10; g++) {
       const st = mafia.create(P(n), { maniac: g % 2 === 0 }, Math.random, ctx);
       let guard = 0;

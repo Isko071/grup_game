@@ -534,3 +534,13 @@ button:not(:disabled):active{transform:scale(.97)}
    иначе два механизма одновременно двигали бы карту и она дёргалась. Поворот — вокруг центра карты. */
 .dhand .pcard{transition:filter .3s,box-shadow .3s}
 .uhand .card{transform-origin:50% 50%;transition:filter .15s}
+
+/* подсказка о составе ролей в лобби мафии */
+.lpreview{margin:12px 0 0;padding:8px 12px;border-radius:10px;background:var(--surface2);font-size:14px;font-weight:600}
+.lpreview.bad{background:rgba(214,48,49,.12);color:var(--danger)}
+
+/* кнопка «UNO!» выскакивает, когда у кого-то осталась одна карта, и пульсирует, чтобы её заметили */
+.unobtn:not([hidden]){animation:unopop .35s cubic-bezier(.22,.8,.3,1),unopulse 1s ease-in-out .35s infinite}
+@keyframes unopop{from{transform:scale(.3);opacity:0}}
+@keyframes unopulse{50%{transform:scale(1.08)}}
+@media (prefers-reduced-motion:reduce){.unobtn:not([hidden]){animation:none}}

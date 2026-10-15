@@ -16,26 +16,67 @@ const NIGHT_KIND = { mafia: 'kill', doctor: 'heal', commissar: 'check', maniac: 
 const meta = {
   id: 'mafia',
   title: 'Мафия',
-  minPlayers: 5,
+  minPlayers: 4,
   maxPlayers: 15,
   supportsBots: false,
-  defaultRules: { mode: 'online', maniac: true },
+  defaultRules: { mode: 'online', mafiaCount: 'auto', doctor: true, commissar: true, maniac: false },
   rulesSchema: [
     {
       key: 'mode', label: 'Режим', type: 'select',
-      choices: [{ value: 'online', label: 'Онлайн (сайт ведёт игру)' }, { value: 'live', label: 'С живым ведущим (создатель)' }],
+      choices: [{ value: 'online', label: 'Онлайн' }, { value: 'live', label: 'С ведущим' }],
     },
-    { key: 'maniac', label: 'Маньяк (если игроков 7 и больше)', type: 'bool' },
+    {
+      key: 'mafiaCount', label: 'Сколько мафий', type: 'select',
+      choices: [{ value: 'auto', label: 'Авто' }, 1, 2, 3, 4, 5].map((v) => (typeof v === 'object' ? v : { value: v, label: String(v) })),
+    },
+    { key: 'doctor', label: 'Доктор', type: 'bool' },
+    { key: 'commissar', label: 'Комиссар', type: 'bool' },
+    { key: 'maniac', label: 'Маньяк', type: 'bool' },
   ],
 };
 
+const MIN_PLAYING = 4; // минимум играющих (в режиме с ведущим ведущий не считается)
+
+// Состав ролей для n играющих по настройкам комнаты; остальные — мирные
+function composition(n, r) {
+  const mafia = r.mafiaCount === 'auto' || !r.mafiaCount ? Math.max(1, Math.floor(n / 3)) : Number(r.mafiaCount);
+  const list = Array(mafia).fill('mafia');
+  if (r.doctor) list.push('doctor');
+  if (r.commissar) list.push('commissar');
+  if (r.maniac) list.push('maniac');
+  return list;
+}
+
+const playingCount = (players, rules) => (rules.mode === 'live' ? players.length - 1 : players.length);
+
 function validate(players, rules) {
-  const live = rules.mode === 'live';
-  if (live) {
-    if (players.some((p) => p.bot)) return 'В режиме с живым ведущим боты не нужны';
-    if (players.length - 1 < 5) return 'С живым ведущим нужно минимум 6 человек (ведущий не играет)';
-  }
+  const r = { ...meta.defaultRules, ...rules };
+  const live = r.mode === 'live';
+  if (live && players.some((p) => p.bot)) return 'В режиме с живым ведущим боты не нужны';
+  const n = playingCount(players, r);
+  if (n < MIN_PLAYING) return live ? `С живым ведущим нужно минимум ${MIN_PLAYING + 1} человек (ведущий не играет)` : `Нужно минимум ${MIN_PLAYING} игрока`;
+  const list = composition(n, r);
+  const mafia = list.filter((x) => x === 'mafia').length;
+  if (list.length > n) return `Ролей (${list.length}) больше, чем игроков (${n})`;
+  if (mafia * 2 >= n) return `Мафий должно быть меньше половины игроков: при ${n} игроках — не больше ${Math.ceil(n / 2) - 1}`;
   return null;
+}
+
+// Подсказка для лобби: какой получится состав (или что мешает начать)
+function preview(players, rules) {
+  const r = { ...meta.defaultRules, ...rules };
+  const n = playingCount(players, r);
+  const bad = validate(players, r);
+  if (bad) return { ok: false, text: bad };
+  const list = composition(n, r);
+  const cnt = (role) => list.filter((x) => x === role).length;
+  const parts = [`мафия ×${cnt('mafia')}`];
+  if (cnt('doctor')) parts.push('доктор');
+  if (cnt('commissar')) parts.push('комиссар');
+  if (cnt('maniac')) parts.push('маньяк');
+  const civil = n - list.length;
+  if (civil) parts.push(`мирные ×${civil}`);
+  return { ok: true, text: `Состав на ${n} ${n < 5 ? 'игрока' : 'игроков'}: ${parts.join(', ')}` };
 }
 
 function shuffle(arr, rnd = Math.random) {
@@ -52,10 +93,7 @@ function create(players, rules = {}, rnd = Math.random, ctx = {}) {
   const hostId = ctx.hostId || null;
   const order = players.filter((p) => !(live && p.id === hostId)).map((p) => p.id);
   const n = order.length;
-  const mafiaCount = Math.max(1, Math.floor(n / 3));
-  const list = Array(mafiaCount).fill('mafia');
-  list.push('doctor', 'commissar');
-  if (r.maniac && n >= 7) list.push('maniac');
+  const list = composition(n, r);
   while (list.length < n) list.push('civil');
   shuffle(list, rnd);
   const st = {
@@ -307,7 +345,7 @@ function removePlayer(st, pid) {
 }
 
 module.exports = {
-  meta, create, act, view, validate, chatPolicy, removePlayer,
+  meta, create, act, view, validate, preview, chatPolicy, removePlayer,
   isOver: (st) => st.phase === 'over',
   _internal: { checkWin, nightTargets, ROLES },
 };

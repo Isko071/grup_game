@@ -249,6 +249,7 @@ class Room {
       timeLeft: this.deadline ? Math.max(0, this.deadline - Date.now()) : null,
       timerTotal: this.deadline ? Number(this.rules.turnTimer ?? g.meta.defaultRules.turnTimer) * 1000 : null,
       reactions: REACTIONS,
+      preview: this.phase === 'lobby' && g.preview ? g.preview(this.players, { ...g.meta.defaultRules, ...this.rules }) : null,
     };
   }
 

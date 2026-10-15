@@ -376,6 +376,7 @@
             <div class="rule"><span>${esc(r.label)}</span>
               <button class="switch ${S.rules[r.key] ? 'on' : ''}" data-rule="${r.key}" ${amHost ? '' : 'disabled'} aria-pressed="${!!S.rules[r.key]}"></button>
             </div>`).join('')}</div>
+          ${S.preview ? `<p class="lpreview ${S.preview.ok ? '' : 'bad'}">${esc(S.preview.text)}</p>` : ''}
           <div style="margin-top:14px">${amHost
             ? `<button class="btn" id="start" style="width:100%" ${S.players.length < game.minPlayers ? 'disabled' : ''}>Начать игру</button>
                ${S.players.length < game.minPlayers ? `<p class="tag" style="margin-top:8px;display:inline-block">Нужно минимум ${game.minPlayers} игрока — позовите друзей или добавьте бота</p>` : ''}`
@@ -1073,7 +1074,7 @@
       U.actionsKey = actionsKey;
       $('#uActions').innerHTML = actionsKey ? '<button class="btn ghost small" id="uFinish">Закончить игру</button>' : '';
     }
-    $('#uUno').hidden = g.over || !!myOut;
+    $('#uUno').hidden = !g.unoAlert; // появляется, только когда у кого-то осталась одна карта
     const resultKey = g.over ? JSON.stringify([g.places, amHost]) : '';
     if (resultKey !== U.resultKey) {
       U.resultKey = resultKey;
@@ -1144,6 +1145,7 @@
   let uTimerRaf = null;
   function startUnoTimer() {
     cancelAnimationFrame(uTimerRaf);
+    const txt0 = $('#uTimerTxt'); if (txt0) txt0.textContent = ''; // секунды показываем только во время своего хода
     if (S.timeLeft == null || !S.game || S.game.over) return;
     const av = app.querySelector('.useat.turn .uav') || app.querySelector('.mebox.turn .uav');
     if (!av) return;
