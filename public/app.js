@@ -635,20 +635,18 @@
     syncOrder($('#dtable'), pairEls);
 
     // рука: отсортирована (козыри в конце), карты, ушедшие на стол, переехали в пары выше
-    // козырь всегда первым (слева), остальные масти так, чтобы красные и чёрные чередовались; внутри масти — по убыванию (старшие слева)
-    const isRed = (x) => x === 'h' || x === 'd';
-    const order = [g.trumpSuit];
-    const rest = ['h', 'c', 'd', 's'].filter((x) => x !== g.trumpSuit);
-    while (rest.length) {
-      const i = rest.findIndex((x) => isRed(x) !== isRed(order[order.length - 1]));
-      order.push(rest.splice(i >= 0 ? i : 0, 1)[0]);
-    }
-    const hand = [...g.hand].sort((x, y) => order.indexOf(x.suit) - order.indexOf(y.suit) || y.rank - x.rank);
+    // козыри всегда слева; дальше все карты по убыванию старшинства (одинаковые достоинства рядом: К К В В 7 6),
+    // внутри одного достоинства — по порядку мастей
+    const suitOrder = ['s', 'h', 'c', 'd'];
+    const trumpFirst = (c) => (c.suit === g.trumpSuit ? 0 : 1);
+    const hand = [...g.hand].sort((x, y) => trumpFirst(x) - trumpFirst(y) || y.rank - x.rank || suitOrder.indexOf(x.suit) - suitOrder.indexOf(y.suit));
+    // простая подсказка: карты, которыми сейчас можно сходить, чуть приподняты (без подсветки)
+    const canUse = new Set(isDef && !g.taking ? [...Object.keys(g.canDefend).map(Number), ...g.canTransfer] : g.canAttack);
     const handEls = hand.map((c) => {
       const el = getCard(c);
       live.add(c.id);
       const t = c.suit === g.trumpSuit ? 'trump' : '';
-      el.className = `pcard ${el.dataset.red} ${dSel === c.id ? 'sel' : ''} ${t}`;
+      el.className = `pcard ${el.dataset.red} ${dSel === c.id ? 'sel' : (canUse.has(c.id) ? 'up' : '')} ${t}`;
       return el;
     });
     const handBox = $('#dHand');
@@ -1040,7 +1038,11 @@
     const edge = cw * 1.5 * 1.3 * Math.sin((((n - 1) / 2) * step * Math.PI) / 180) + cw * 0.12;
     const avail = Math.min(app.clientWidth || innerWidth, 620) - 16 - 2 * edge;
     const ov = n > 1 ? Math.min(cw - 18, Math.max(10, (n * cw - avail) / (n - 1))) : 0;
-    const handEls = g.hand.map((c, i) => {
+    // рука по цветам: красные, жёлтые, зелёные, синие, потом дикие; внутри цвета — числа по порядку, затем действия
+    const colorOrder = ['r', 'y', 'g', 'b', 'w'];
+    const valueOrder = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'skip', 'rev', '+2', 'wild', '+4'];
+    const hand = [...g.hand].sort((x, y) => colorOrder.indexOf(x.color) - colorOrder.indexOf(y.color) || valueOrder.indexOf(x.value) - valueOrder.indexOf(y.value));
+    const handEls = hand.map((c, i) => {
       const el = getCard(c);
       live.add(c.id);
       const off = i - (n - 1) / 2;

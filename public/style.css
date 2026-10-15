@@ -240,7 +240,7 @@ select.sel{background:var(--bg);border:1px solid var(--border);border-radius:10p
 .pcard{background:linear-gradient(180deg,#fff,#f5f3ee);border-color:#d6d3cb}
 .flyghost{position:fixed;z-index:80;pointer-events:none}
 .flyghost .pcard{width:100%;height:100%}
-.pcard.sel{animation:lift .15s ease-out}
+
 @keyframes lift{from{transform:translateY(-6px)}}
 
 .dhandwrap{margin:0 -10px;padding:0 10px;transition:background .3s}
@@ -544,3 +544,10 @@ button:not(:disabled):active{transform:scale(.97)}
 @keyframes unopop{from{transform:scale(.3);opacity:0}}
 @keyframes unopulse{50%{transform:scale(1.08)}}
 @media (prefers-reduced-motion:reduce){.unobtn:not([hidden]){animation:none}}
+
+/* дурак: карты, которыми можно сходить, чуть приподняты; выбранная — выше */
+/* подсказка: карты, которыми можно сходить, чуть приподняты; свойство translate не мешает FLIP-анимациям по transform */
+.dhand .pcard{transition:filter .3s,box-shadow .3s,translate .25s ease-out}
+.dhand .pcard.ok,.dhand .pcard.ok:hover,.dhand .pcard.sel{transform:none}
+.dhand .pcard.up{translate:0 -12px}
+.dhand .pcard.sel{translate:0 -22px}
