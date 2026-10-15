@@ -311,7 +311,7 @@
     document.body.classList.toggle('inroom', !!S);
     $('#exitBtn').hidden = !S;
     if (!S) return renderHome();
-    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dSel = null; mSel = null; return renderLobby(); }
+    if (S.phase === 'lobby') { seenCards.clear(); prevTopId = null; dSel = null; uSel = null; mSel = null; return renderLobby(); }
     renderGame();
   }
 
@@ -421,7 +421,53 @@
     const label = `<span>${rk(c.rank)}</span><small>${SUIT[c.suit]}</small>`;
     return `<div class="pcard ${red ? 'red' : ''} ${cls}" ${attrs}><span class="rk">${label}</span><span class="big">${SUIT[c.suit]}</span><span class="rk br">${label}</span></div>`;
   };
-  let dSel = null; // выбранная карта защитника
+  let dSel = null; // выбранная карта в руке (дурак)
+  let uSel = null; // выбранная карта в руке (УНО)
+
+  // Ход картой из руки: первое нажатие выбирает карту (она приподнимается), второе нажатие на неё же — ходит.
+  // Можно и сразу смахнуть карту вверх — это тоже ход. Пока палец ведёт карту, она едет за ним (свойство translate,
+  // чтобы не мешать FLIP-анимациям по transform); после хода карта летит на стол прямо с того места, где её отпустили.
+  function handGestures(box, sel, { tap, play }) {
+    let g0 = null;
+    let skipClickUntil = 0;
+    box.addEventListener('pointerdown', (e) => {
+      const el = e.target.closest(sel);
+      if (!el || e.button > 0) return;
+      g0 = { el, id: Number(el.dataset.id), x: e.clientX, y: e.clientY, drag: false, pid: e.pointerId };
+    });
+    box.addEventListener('pointermove', (e) => {
+      if (!g0 || e.pointerId !== g0.pid) return;
+      const dx = e.clientX - g0.x;
+      const dy = e.clientY - g0.y;
+      if (!g0.drag && -dy > 10 && -dy > Math.abs(dx)) {
+        g0.drag = true;
+        g0.el.classList.add('drag');
+        try { g0.el.setPointerCapture(e.pointerId); } catch { /* */ }
+      }
+      if (g0.drag) g0.el.style.translate = `${dx}px ${Math.min(0, dy)}px`;
+    });
+    const end = (e) => {
+      if (!g0 || e.pointerId !== g0.pid) return;
+      const s = g0;
+      g0 = null;
+      if (!s.drag) return; // обычное нажатие разберёт click
+      skipClickUntil = Date.now() + 400;
+      s.el.classList.remove('drag');
+      if (e.type === 'pointerup' && s.y - e.clientY > 60 && play(s.id) !== false) {
+        // если сервер ход не принял, карта сама вернётся в руку
+        setTimeout(() => { if (box.contains(s.el) && !s.el.classList.contains('drag')) s.el.style.translate = ''; }, 1500);
+      } else s.el.style.translate = '';
+    };
+    box.addEventListener('pointerup', end);
+    box.addEventListener('pointercancel', end);
+    box.addEventListener('click', (e) => {
+      if (Date.now() < skipClickUntil) return;
+      const el = e.target.closest(sel);
+      tap(el ? Number(el.dataset.id) : null);
+    });
+  }
+  // перед перелётом снимаем смещение от свайпа: начальная точка уже измерена вместе с ним
+  const dropSwipe = (el) => { if (el.style.translate && !el.classList.contains('drag')) el.style.translate = ''; };
 
   const avatarColor = (name) => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 50% 42%)`; };
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -501,7 +547,7 @@
         <div class="mebar"><div id="dMeSeat"></div><div class="actions" id="dActions"></div></div>
       </div>`;
     D.cards.clear(); D.seats.clear(); D.pairs.clear(); D.prev = null; D.deckKey = ''; D.discKey = '';
-    $('#dHand').onclick = (e) => { const el = e.target.closest('.pcard'); if (el) onDurakHand(Number(el.dataset.id)); };
+    handGestures($('#dHand'), '.pcard', { tap: onDurakTap, play: playDurakCard });
     $('#dtable').onclick = (e) => { const pe = e.target.closest('.pair'); if (pe && pe.querySelectorAll('.pcard').length === 1) onDurakTarget(Number(pe.dataset.att)); };
     $('#dActions').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
@@ -513,19 +559,29 @@
     };
   }
 
-  // Подсказок нет: нажатие на карту — это попытка хода, а подходит ли она, говорит сервер
-  function onDurakHand(id) {
-    const g = S.game;
-    if (g.defender === S.me && !g.taking) {
-      const open = g.table.filter((p) => !p.d).length;
-      if (!open) return;
-      // одна неотбитая карта и нет перевода — отбиваем сразу, иначе выбираем карту, а потом нажимаем на карту на столе
-      if (open === 1 && !S.rules.transfer) { const idx = g.table.findIndex((p) => !p.d); dSel = null; return emit('game:action', { type: 'defend', attackId: idx, cardId: id }); }
-      dSel = dSel === id ? null : id;
-      renderDurak();
-    } else emit('game:action', { type: 'attack', cardId: id });
+  // первое нажатие выбирает карту, второе — ходит ею; нажатие мимо карт снимает выбор
+  function onDurakTap(id) {
+    if (id !== null && dSel === id) { playDurakCard(id); return; }
+    dSel = id;
+    renderDurak();
   }
-  function onDurakTarget(att) { const id = dSel; dSel = null; emit('game:action', { type: 'defend', attackId: att, cardId: id }); }
+  // ход выбранной картой: подкинуть, отбиться (карту на столе подбираем сами) или перевести; подходит ли карта, решает сервер
+  function playDurakCard(id) {
+    const g = S.game;
+    dSel = null;
+    if (g.defender === S.me && !g.taking) {
+      const open = g.table.map((p, i) => (p.d ? -1 : i)).filter((i) => i >= 0);
+      if (!open.length) { renderDurak(); return false; }
+      const beats = g.canDefend[id];
+      if (beats && beats.length) emit('game:action', { type: 'defend', attackId: beats[0], cardId: id });
+      else if (g.canTransfer.includes(id)) emit('game:action', { type: 'transfer', cardId: id });
+      else emit('game:action', { type: 'defend', attackId: open[0], cardId: id });
+    } else emit('game:action', { type: 'attack', cardId: id });
+    renderDurak();
+    return true;
+  }
+  // выбранную карту можно положить и на конкретную карту на столе
+  function onDurakTarget(att) { const id = dSel; if (id === null) return; dSel = null; emit('game:action', { type: 'defend', attackId: att, cardId: id }); renderDurak(); }
 
   function syncSeat(id, g, isMe) {
     let el = D.seats.get(id);
@@ -567,7 +623,6 @@
     if (!app.querySelector('.table.durak')) buildDurak();
     const first = !D.prev;
     if (dSel !== null && !g.hand.some((c) => c.id === dSel)) dSel = null;
-    if (!isDef || g.taking) dSel = null;
     // «мой ход» по роли, без намёка на то, есть ли чем ходить
     const iAct = !g.over && (g.canTake || g.canPass || (g.table.length === 0 && g.attacker === me));
     const myIdx = g.order.indexOf(me);
@@ -578,6 +633,7 @@
     const beforeHtml = new Map();
     D.cards.forEach((el, cid) => {
       before.set(cid, cardSnap(el));
+      dropSwipe(el);
       if (el.closest('.pair')) beforeHtml.set(cid, el.cloneNode(true).outerHTML.replace(/ data-cid="\d+"| data-id="\d+"/g, ''));
       el.getAnimations().forEach((a) => a.cancel());
     });
@@ -646,7 +702,7 @@
       const el = getCard(c);
       live.add(c.id);
       const t = c.suit === g.trumpSuit ? 'trump' : '';
-      el.className = `pcard ${el.dataset.red} ${dSel === c.id ? 'sel' : (canUse.has(c.id) ? 'up' : '')} ${t}`;
+      el.className = `pcard ${el.dataset.red} ${dSel === c.id ? 'sel' : (canUse.has(c.id) ? 'up' : '')} ${t} ${el.classList.contains('drag') ? 'drag' : ''}`;
       return el;
     });
     const handBox = $('#dHand');
@@ -900,7 +956,14 @@
         <div id="uResult"></div>
       </div>`;
     U.cards.clear(); U.seats.clear(); U.prev = null; U.bannerKey = null; U.resultKey = null; U.actionsKey = null; U.dir = 1;
-    $('#uHand').onclick = (e) => { const el = e.target.closest('.card'); if (el && el.classList.contains('ok')) playUnoCard(Number(el.dataset.id)); };
+    handGestures($('#uHand'), '.card', {
+      tap: (id) => {
+        if (id !== null && uSel === id) { uSel = null; playUnoCard(id); renderUno(); return; }
+        uSel = id !== null && S.game.playable.includes(id) ? id : null;
+        renderUno();
+      },
+      play: (id) => { if (!S.game.playable.includes(id)) return false; uSel = null; playUnoCard(id); return true; },
+    });
     $('#drawPile').onclick = () => {
       const g = S.game;
       if (g.turn === S.me && !g.over && !g.out[S.me] && g.drawn === null) emit('game:action', { type: 'draw' });
@@ -984,7 +1047,7 @@
 
     // 1. «до»: позиции карт (вместе с идущими анимациями), затем останавливаем анимации
     const before = new Map();
-    U.cards.forEach((el, cid) => { before.set(cid, cardSnap(el)); el.getAnimations().forEach((a) => a.cancel()); });
+    U.cards.forEach((el, cid) => { before.set(cid, cardSnap(el)); dropSwipe(el); el.getAnimations().forEach((a) => a.cancel()); });
     const seatBefore = new Map();
     U.seats.forEach((el, id) => seatBefore.set(id, dRect(el.querySelector('.uav'))));
     const pileBefore = dRect($('#drawPile .card'));
@@ -1041,14 +1104,15 @@
     // рука по цветам: красные, жёлтые, зелёные, синие, потом дикие; внутри цвета — числа по порядку, затем действия
     const colorOrder = ['r', 'y', 'g', 'b', 'w'];
     const valueOrder = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'skip', 'rev', '+2', 'wild', '+4'];
+    if (uSel !== null && !g.playable.includes(uSel)) uSel = null;
     const hand = [...g.hand].sort((x, y) => colorOrder.indexOf(x.color) - colorOrder.indexOf(y.color) || valueOrder.indexOf(x.value) - valueOrder.indexOf(y.value));
     const handEls = hand.map((c, i) => {
       const el = getCard(c);
       live.add(c.id);
       const off = i - (n - 1) / 2;
       const ok = g.playable.includes(c.id);
-      el.className = `${el.dataset.base} ${ok ? 'ok' : (myTurn ? 'no' : '')}`;
-      el.style.cssText = `--w:${cw}px;--rot:${(off * step).toFixed(1)}deg;--ty:${(off * off * 0.9).toFixed(1)}px;margin-left:${i ? -ov : 0}px`;
+      el.className = `${el.dataset.base} ${ok ? 'ok' : (myTurn ? 'no' : '')} ${uSel === c.id ? 'sel' : ''} ${el.classList.contains('drag') ? 'drag' : ''}`;
+      el.style.cssText = `${el.classList.contains('drag') ? `translate:${el.style.translate};` : ''}--w:${cw}px;--rot:${(off * step).toFixed(1)}deg;--ty:${(off * off * 0.9).toFixed(1)}px;margin-left:${i ? -ov : 0}px`;
       return el;
     });
     syncOrder($('#uHand'), handEls);
