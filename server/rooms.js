@@ -7,7 +7,7 @@ const ROOM_TTL_MS = 20 * 60 * 1000; // пустая комната живёт 20
 // поэтому место и роль создателя держим за отключившимся, а не отдаём сразу.
 const LOBBY_GRACE_MS = Number(process.env.LOBBY_GRACE_MS) || 3 * 60 * 1000; // сколько держим место в лобби
 const HOST_GRACE_MS = Number(process.env.HOST_GRACE_MS) || 90 * 1000; // через сколько создатель передаётся другому
-const BOT_DELAY_MS = 900;
+const BOT_DELAY_MS = 1300; // чуть дольше перелёта карты, чтобы анимации не наслаивались
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_CHAT = 100;
 const REACTIONS = ['👍', '😂', '😮', '😡', '🔥', '👏'];
@@ -249,6 +249,7 @@ class Room {
       timeLeft: this.deadline ? Math.max(0, this.deadline - Date.now()) : null,
       timerTotal: this.deadline ? Number(this.rules.turnTimer ?? g.meta.defaultRules.turnTimer) * 1000 : null,
       reactions: REACTIONS,
+      preview: this.phase === 'lobby' && g.preview ? g.preview(this.players, { ...g.meta.defaultRules, ...this.rules }) : null,
     };
   }
 

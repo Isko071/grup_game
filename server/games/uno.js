@@ -170,7 +170,8 @@ function act(st, pid, a, ctx) {
       say(st, `${nm(st, pid)} поймал ${nm(st, t)} без «УНО!» (+2 карты)`);
       did = true; sound = 'penalty';
     }
-    if (hand.length <= 2 && !st.called[pid]) {
+    // защитить себя можно, только когда уже осталась одна карта (кнопка появляется именно тогда)
+    if (hand.length === 1 && !st.called[pid]) {
       st.called[pid] = true;
       say(st, `${nm(st, pid)}: УНО!`);
       did = true; sound = sound || 'uno';
@@ -315,6 +316,9 @@ function view(st, pid, ctx) {
     canPass: mine && st.drawn !== null,
     drawLeft: st.draw.length,
     canFinish: !!ctx && ctx.host === pid && st.finished.length >= 1 && !st.over,
+    // кнопка «UNO!» видна, только когда у кого-то осталась одна карта и «УНО!» ещё не крикнули
+    unoAlert: !st.over && !st.out[pid] && ((me.length === 1 && !st.called[pid])
+      || (!!st.catchable && st.catchable !== pid && !st.out[st.catchable] && st.hands[st.catchable].length === 1 && !st.called[st.catchable])),
     over: st.over,
     winner: st.finished[0] || null,
     goal: Math.ceil(st.order.length / 2),
@@ -331,7 +335,7 @@ function view(st, pid, ctx) {
 function botMove(st, pid) {
   if (st.over || st.out[pid]) return null;
   const hand = st.hands[pid];
-  if (hand.length <= 2 && !st.called[pid]) return { type: 'uno' };
+  if (hand.length === 1 && !st.called[pid]) return { type: 'uno' };
   const t = st.catchable;
   if (t && t !== pid && !st.out[t] && st.hands[t].length === 1 && !st.called[t] && st.rnd() < 0.7) return { type: 'uno' };
   if (currentId(st) !== pid) return null;

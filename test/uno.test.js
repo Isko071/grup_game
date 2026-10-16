@@ -146,11 +146,9 @@ test('«УНО!» у всех: поймать забывшего (+2) и защ�
   assert.strictEqual(st.hands.p0.length, 3);
   assert.ok(uno.act(st, 'p2', { type: 'uno' }).error); // ловить уже некого, самому рано
 
-  const safe = fresh();
-  safe.hands.p0 = [card(1, 'r', '1'), card(2, 'r', '2')];
-  uno.act(safe, 'p0', { type: 'uno' }); // заранее
-  uno.act(safe, 'p0', { type: 'play', cardId: 1 });
-  assert.strictEqual(safe.catchable, null);
+  const early = fresh();
+  early.hands.p0 = [card(1, 'r', '1'), card(2, 'r', '2')];
+  assert.ok(uno.act(early, 'p0', { type: 'uno' }).error); // на двух картах кнопки ещё нет
 
   const late = fresh();
   late.hands.p0 = [card(1, 'r', '1'), card(2, 'r', '2')];
@@ -262,6 +260,8 @@ test('боты УНО: на двух картах жмут «УНО!», ловя
   assert.strictEqual(uno.meta.supportsBots, true);
   const st = fresh();
   st.hands.p1 = [card(1, 'r', '1'), card(2, 'r', '2')];
+  assert.notDeepStrictEqual(uno.botMove(st, 'p1'), { type: 'uno' }); // на двух картах ещё рано
+  st.hands.p1 = [card(1, 'r', '1')];
   assert.deepStrictEqual(uno.botMove(st, 'p1'), { type: 'uno' });
   for (const rules of [{ stack: 'all', drawMode: 'until' }, { stack: 'same', drawMode: 'one' }, { stack: 'off', drawMode: 'one' }]) {
     for (let g = 0; g < 15; g++) {
@@ -320,4 +320,15 @@ test('таймер: ключ хода меняется, даже если ход
   uno.act(st, 'p0', { type: 'play', cardId: 1 });
   assert.strictEqual(cur(st), 'p0'); // снова ходит p0
   assert.notStrictEqual(uno.turnKey(st), k1); // но таймер должен начаться заново
+});
+
+
+test('кнопка «UNO!» видна только когда у кого-то одна карта и «УНО!» ещё не крикнули', () => {
+  const st = fresh();
+  st.hands.p0 = [card(1, 'r', '1'), card(2, 'r', '2')];
+  assert.deepStrictEqual(['p0', 'p1', 'p2'].map((id) => uno.view(st, id).unoAlert), [false, false, false]);
+  uno.act(st, 'p0', { type: 'play', cardId: 1 }); // у p0 осталась одна карта
+  assert.deepStrictEqual(['p0', 'p1', 'p2'].map((id) => uno.view(st, id).unoAlert), [true, true, true]);
+  uno.act(st, 'p0', { type: 'uno' }); // p0 успел крикнуть — кнопка у всех пропадает
+  assert.deepStrictEqual(['p0', 'p1', 'p2'].map((id) => uno.view(st, id).unoAlert), [false, false, false]);
 });
