@@ -26,7 +26,7 @@ const meta = {
     },
     {
       key: 'tasks', label: 'Задания', type: 'select',
-      choices: [{ value: 'player', label: 'Придумывает крутивший' }, { value: 'deck', label: 'Случайные' }],
+      choices: [{ value: 'player', label: 'Решают игроки' }, { value: 'deck', label: 'Предлагает сайт' }],
     },
   ],
 };
@@ -45,7 +45,7 @@ function create(players, rules = {}, rnd = Math.random, ctx = {}) {
     spinSeq: 0, // номер прокрутки — клиент по нему запускает анимацию
     turns: 5, // сколько полных оборотов в анимации
     jitter: 0, // где именно внутри сектора игрока остановится стрелка (−0.35…0.35 от ширины сектора)
-    lastTarget: null,
+    recent: [], // на кого выпадало недавно (последний — в конце)
     stats: Object.fromEntries(order.map((id) => [id, { done: 0, refused: 0 }])),
     used: { truth: [], dare: [] },
     history: [],
@@ -84,6 +84,15 @@ function canSpin(st, pid, host) {
   return pid === st.spinner;
 }
 
+// Случайный игрок; кому недавно выпадало, тому шанс меньше (но выпасть снова можно):
+// последнему — 35% от обычного, предпоследнему — 60%
+function pickTarget(st, others) {
+  const w = others.map((id) => (id === st.recent[st.recent.length - 1] ? 0.35 : id === st.recent[st.recent.length - 2] ? 0.6 : 1));
+  let x = st.rnd() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < others.length; i++) { x -= w[i]; if (x < 0) return others[i]; }
+  return others[others.length - 1];
+}
+
 function drawTask(st, kind) {
   const list = TASKS[kind];
   let free = list.map((_, i) => i).filter((i) => !st.used[kind].includes(i));
@@ -118,11 +127,10 @@ function act(st, pid, a, ctx = {}) {
       if (!canSpin(st, pid, host)) return { error: 'Сейчас крутите не вы' };
       const others = st.order.filter((id) => id !== pid);
       if (!others.length) return { error: 'Не с кем играть' };
-      // тот, на кого выпало в прошлый раз, при большой компании выпадает реже: не подряд
-      const pool = others.length > 2 ? others.filter((id) => id !== st.lastTarget) : others;
-      const target = pool[Math.floor(st.rnd() * pool.length)];
-      st.round = { by: pid, target, kind: null, task: null, fromDeck: false };
-      st.lastTarget = target;
+      const target = pickTarget(st, others);
+      st.round = { by: pid, target, kind: null, task: null, fromDeck: false, from: null };
+      st.recent.push(target);
+      if (st.recent.length > 2) st.recent.shift();
       st.spinSeq++;
       st.turns = 4 + Math.floor(st.rnd() * 3);
       st.jitter = Math.round((st.rnd() * 0.7 - 0.35) * 100) / 100;
@@ -133,27 +141,34 @@ function act(st, pid, a, ctx = {}) {
       if (st.phase !== 'choose' || pid !== r.target) return { error: 'Выбирает тот, на кого выпало' };
       if (a.kind !== 'truth' && a.kind !== 'dare') return { error: 'Правда или действие?' };
       r.kind = a.kind;
-      if (st.rules.tasks === 'deck' || !st.order.includes(r.by)) {
+      if (st.rules.tasks === 'deck' || st.order.length < 2) {
         r.task = drawTask(st, a.kind); r.fromDeck = true;
         st.phase = 'doing';
       } else st.phase = 'task';
       return { ok: true, sound: 'play' };
     }
     case 'task': {
-      if (st.phase !== 'task' || pid !== r.by) return { error: 'Задание даёт тот, кто крутил' };
+      // задание придумывают сами игроки: любой, кроме того, на кого выпало; чьё отправлено первым — то и в силе
+      if (st.phase !== 'task') return { error: 'Задание уже есть' };
+      if (pid === r.target || !st.order.includes(pid)) return { error: 'Себе задание не придумывают' };
       if (a.random) { r.task = drawTask(st, r.kind); r.fromDeck = true; } else {
         const text = String(a.text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 200);
         if (!text) return { error: 'Напишите задание' };
-        r.task = text; r.fromDeck = false;
+        r.task = text; r.fromDeck = false; r.from = pid;
       }
       st.phase = 'doing';
+      return { ok: true, sound: 'turn' };
+    }
+    case 'reroll': { // «Предлагает сайт»: игроки могут попросить другое задание (кроме того, кому оно)
+      if (st.phase !== 'doing' || !r.fromDeck || pid === r.target || !st.order.includes(pid)) return { error: 'Нельзя' };
+      r.task = drawTask(st, r.kind);
       return { ok: true, sound: 'turn' };
     }
     case 'done':
     case 'refuse': {
       if (st.phase !== 'doing') return { error: 'Сейчас нечего засчитывать' };
       // выполнение засчитывают сам игрок, тот, кто дал задание, или создатель; отказаться может только сам игрок
-      if (a.type === 'refuse' ? pid !== r.target : ![r.target, r.by, host].includes(pid)) return { error: 'Нельзя' };
+      if (a.type === 'refuse' ? pid !== r.target : ![r.target, r.by, r.from, host].includes(pid)) return { error: 'Нельзя' };
       finishRound(st, a.type, host);
       return { ok: true, sound: a.type === 'done' ? 'win' : 'penalty' };
     }
@@ -212,7 +227,7 @@ function removePlayer(st, pid, ctx = {}) {
   const wasSpinner = st.spinner === pid;
   const next = st.order[(i + 1) % st.order.length];
   st.order.splice(i, 1);
-  if (r && (r.target === pid || (r.by === pid && st.phase === 'task'))) {
+  if (r && r.target === pid) {
     st.round = null; st.phase = 'spin';
     st.spinner = st.rules.spinner === 'anyone' ? null : (r.target === pid ? (st.order.includes(r.by) ? r.by : st.order[0]) : r.target);
   } else if (wasSpinner && st.phase === 'spin') st.spinner = next === pid ? st.order[0] : next;

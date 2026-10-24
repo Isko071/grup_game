@@ -945,7 +945,7 @@
       if (b.id === 'rSpin') spin();
       else if (b.dataset.kind) act({ type: 'choose', kind: b.dataset.kind });
       else if (b.id === 'rGive') { const text = ($('#rTask').value || '').trim(); if (!text) return toast('Напишите задание'); W.draft = ''; act({ type: 'task', text }); }
-      else if (b.id === 'rRandom') { W.draft = ''; act({ type: 'task', random: true }); }
+      else if (b.id === 'rReroll') act({ type: 'reroll' });
       else if (b.id === 'rDone') act({ type: 'done' });
       else if (b.id === 'rRefuse') act({ type: 'refuse' });
       else if (b.id === 'again') emit('room:lobby');
@@ -1060,17 +1060,19 @@
              <div class="actions"><button class="btn rtruth" data-kind="truth">🤫 Правда</button><button class="btn rdare" data-kind="dare">🔥 Действие</button></div>`
           : `<div class="rwait">${esc(nameOf(r.target))} выбирает: правда или действие</div>`;
       } else if (g.phase === 'task') {
-        html = r.by === me
-          ? `<div class="rtitle">Задание для ${esc(nameOf(r.target))} · <span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span></div>
+        // задание придумывают сами игроки: писать может любой, кроме того, кому оно; в силе то, что отправили первым
+        html = r.target !== me
+          ? `<div class="rtitle">${r.kind === 'truth' ? 'Вопрос' : 'Задание'} для ${esc(nameOf(r.target))} · <span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span></div>
              <textarea id="rTask" maxlength="200" rows="2" placeholder="${r.kind === 'truth' ? 'Ваш вопрос…' : 'Что нужно сделать…'}">${esc(W.draft)}</textarea>
-             <div class="actions"><button class="btn" id="rGive">Задать</button><button class="btn ghost" id="rRandom">🎲 Случайное</button></div>`
-          : `<div class="rwait">${esc(who(r.by))} придумывает ${r.kind === 'truth' ? 'вопрос' : 'задание'} для ${esc(r.target === me ? 'вас' : nameOf(r.target))} · <span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span></div>`;
+             <div class="actions"><button class="btn" id="rGive">Задать</button></div>
+             <div class="rhint">Договоритесь вместе — засчитается то, что отправят первым</div>`
+          : `<div class="rwait">Игроки придумывают вам ${r.kind === 'truth' ? 'вопрос' : 'задание'}… · <span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span></div>`;
       } else if (g.phase === 'doing') {
-        const canDone = r.target === me || r.by === me || g.isHost;
+        const canDone = r.target === me || r.by === me || r.from === me || g.isHost;
         html = `<div class="rtask"><span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span>
-            <div class="rfor">${r.target === me ? 'Вам' : esc(nameOf(r.target))}${r.fromDeck ? ' · из колоды' : ` · от ${esc(who(r.by))}`}</div>
+            <div class="rfor">${r.target === me ? 'Вам' : esc(nameOf(r.target))}${r.fromDeck ? ' · предлагает сайт' : ` · от ${esc(who(r.from))}`}</div>
             <div class="rtext">${esc(r.task)}</div></div>
-          <div class="actions">${canDone ? `<button class="btn" id="rDone">✅ ${r.target === me ? 'Выполнено' : 'Засчитать'}</button>` : ''}${r.target === me ? '<button class="btn ghost" id="rRefuse">🙅 Отказываюсь</button>' : ''}</div>`;
+          <div class="actions">${canDone ? `<button class="btn" id="rDone">✅ ${r.target === me ? 'Выполнено' : 'Засчитать'}</button>` : ''}${r.target === me ? '<button class="btn ghost" id="rRefuse">🙅 Отказываюсь</button>' : ''}${r.fromDeck && r.target !== me ? '<button class="btn ghost" id="rReroll">🎲 Другое</button>' : ''}</div>`;
       }
       $('#rPanel').innerHTML = html;
       const ta = $('#rTask');

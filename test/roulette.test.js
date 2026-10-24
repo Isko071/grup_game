@@ -70,15 +70,32 @@ test('режимы: по кругу, любой, только создатель
   assert.strictEqual(roulette.view(host, 'p0', ctx).spinner, 'p0');
 });
 
-test('в большой компании одному и тому же не выпадает дважды подряд', () => {
+test('одному и тому же можно выпасть дважды подряд, но реже', () => {
   const st = roulette.create(P(5), { spinner: 'anyone', tasks: 'deck' }, Math.random, ctx);
-  let last = null;
-  for (let i = 0; i < 200; i++) {
+  let last = null; let repeats = 0; const N = 4000;
+  for (let i = 0; i < N; i++) {
     act(st, 'p0', { type: 'spin' });
-    assert.notStrictEqual(st.round.target, last);
+    if (st.round.target === last) repeats++;
     last = st.round.target;
     act(st, 'p0', { type: 'skip' });
   }
+  // без поправки повтор был бы примерно в 1/4 случаев (4 кандидата); с поправкой — заметно реже, но бывает
+  assert.ok(repeats > 0, 'повтор возможен');
+  assert.ok(repeats / N < 0.15, `повторов слишком много: ${repeats / N}`);
+});
+
+test('задание придумывает любой игрок, кроме того, на кого выпало', () => {
+  const st = roulette.create(P(4), {}, Math.random, ctx);
+  const by = st.spinner;
+  act(st, by, { type: 'spin' });
+  const target = st.round.target;
+  act(st, target, { type: 'choose', kind: 'truth' });
+  assert.ok(act(st, target, { type: 'task', text: 'сам себе' }).error);
+  const third = st.order.find((id) => id !== by && id !== target);
+  assert.ok(!act(st, third, { type: 'task', text: 'Кто тебе нравится?' }).error);
+  assert.strictEqual(st.round.from, third);
+  assert.ok(act(st, by, { type: 'task', text: 'опоздал' }).error, 'второе задание уже не принимается');
+  assert.ok(!act(st, third, { type: 'done' }).error, 'засчитать может автор задания');
 });
 
 test('создатель пропускает зависший круг; выход игрока не ломает игру; можно зайти посреди игры', () => {
@@ -107,4 +124,17 @@ test('создатель заканчивает игру', () => {
   act(st, 'p0', { type: 'finish' });
   assert.ok(roulette.isOver(st));
   assert.strictEqual(roulette.view(st, 'p1', ctx).phase, 'over');
+});
+
+test('«Предлагает сайт»: другие игроки могут попросить другое задание, сам игрок — нет', () => {
+  const st = roulette.create(P(3), { tasks: 'deck' }, Math.random, ctx);
+  const by = st.spinner;
+  act(st, by, { type: 'spin' });
+  const target = st.round.target;
+  act(st, target, { type: 'choose', kind: 'dare' });
+  const first = st.round.task;
+  assert.ok(act(st, target, { type: 'reroll' }).error);
+  assert.ok(!act(st, by, { type: 'reroll' }).error);
+  assert.notStrictEqual(st.round.task, first);
+  assert.ok(roulette.TASKS.dare.includes(st.round.task));
 });
