@@ -322,7 +322,7 @@
     app.innerHTML = `
       <div class="hero card-box">
         <h1>♠ Карточный круг</h1>
-        <p>Уно, дурак и мафия с друзьями. Без регистрации — ник и код комнаты.</p>
+        <p>Уно, дурак, мафия и «Задания» с друзьями. Без регистрации — ник и код комнаты.</p>
         <div class="field"><label for="nameIn">Ваш ник</label>
           <input id="nameIn" maxlength="16" placeholder="Как вас зовут?" value="${esc(store.get('name') || '')}" autocomplete="nickname"></div>
         ${code ? `<button class="btn" id="joinUrl">Войти в комнату ${esc(code)}</button>
@@ -406,7 +406,7 @@
   const COLOR_RU = { r: 'красный', y: 'жёлтый', g: 'зелёный', b: 'синий' };
 
   function renderGame() {
-    const fn = { uno: renderUno, durak: renderDurak, mafia: renderMafia }[S.gameId];
+    const fn = { uno: renderUno, durak: renderDurak, mafia: renderMafia, roulette: renderRoulette }[S.gameId];
     if (fn) return fn();
     app.innerHTML = '<div class="card-box">Эта игра пока недоступна</div>';
   }
@@ -912,6 +912,193 @@
     bind('#mEndDay', () => act({ type: 'endDay' }));
     bind('#mEnd', async () => { if (await confirmBox({ title: 'Завершить игру?', text: 'Игра закончится, все роли раскроются.', ok: 'Завершить', cancel: 'Продолжить' })) act({ type: 'endGame' }); });
     bind('#again', () => emit('room:lobby'));
+  }
+
+  // ---------- РУЛЕТКА: колесо с именами, «правда или действие» ----------
+  // Колесо строится один раз и перестраивается, только когда меняется состав игроков. Сектора идут по кругу
+  // в одном и том же порядке у всех, поэтому все видят одинаковое колесо и одинаковую остановку.
+  const W = { rot: 0, seq: null, spinUntil: 0, orderKey: '', panelKey: '', draft: '', timer: null };
+  const SPIN_MS = 5200;
+  const KIND_RU = { truth: 'Правда', dare: 'Действие' };
+
+  function buildRoulette() {
+    app.innerHTML = `
+      <div class="table roulette">
+        <div class="rstatus" id="rStatus"></div>
+        <div class="rwheelwrap" id="rWheelWrap">
+          <div class="rpointer"></div>
+          <svg class="rwheel" id="rWheel" viewBox="-100 -100 200 200"></svg>
+          <button class="rhub" id="rHub">🎡</button>
+        </div>
+        <div class="rpanel card-box" id="rPanel"></div>
+        <div class="rscore" id="rScore"></div>
+        <div class="rlog" id="rLog"></div>
+        <div class="actions" id="rHost"></div>
+      </div>`;
+    W.orderKey = ''; W.panelKey = ''; W.seq = null;
+    const act = (a) => emit('game:action', a);
+    const spin = () => { if (S.game.canSpin && Date.now() >= W.spinUntil) act({ type: 'spin' }); };
+    $('#rWheelWrap').onclick = spin;
+    $('#rPanel').addEventListener('input', (e) => { if (e.target.id === 'rTask') W.draft = e.target.value; });
+    $('#rPanel').onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.id === 'rSpin') spin();
+      else if (b.dataset.kind) act({ type: 'choose', kind: b.dataset.kind });
+      else if (b.id === 'rGive') { const text = ($('#rTask').value || '').trim(); if (!text) return toast('Напишите задание'); W.draft = ''; act({ type: 'task', text }); }
+      else if (b.id === 'rReroll') act({ type: 'reroll' });
+      else if (b.id === 'rDone') act({ type: 'done' });
+      else if (b.id === 'rRefuse') act({ type: 'refuse' });
+      else if (b.id === 'again') emit('room:lobby');
+    };
+    $('#rHost').onclick = async (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.id === 'rSkip') act({ type: 'skip' });
+      else if (b.id === 'rFinish' && await confirmBox({ title: 'Закончить игру?', text: 'Покажем, кто сколько заданий выполнил.', ok: 'Закончить', cancel: 'Продолжить' })) act({ type: 'finish' });
+    };
+  }
+
+  // сектора колеса: цвет и имя каждого игрока
+  function drawWheel(order) {
+    const n = order.length;
+    const a = 360 / n;
+    const pt = (deg, r) => { const t = ((deg - 90) * Math.PI) / 180; return `${(r * Math.cos(t)).toFixed(2)} ${(r * Math.sin(t)).toFixed(2)}`; };
+    const maxLen = n > 10 ? 7 : n > 6 ? 9 : 11;
+    $('#rWheel').innerHTML = order.map((id, i) => {
+      const nm = nameOf(id);
+      const label = nm.length > maxLen ? nm.slice(0, maxLen - 1) + '…' : nm;
+      const mid = (i + 0.5) * a;
+      const path = n === 1 ? '<circle r="96"/>' : `<path d="M0 0 L${pt(i * a, 96)} A96 96 0 ${a > 180 ? 1 : 0} 1 ${pt((i + 1) * a, 96)} Z"/>`;
+      return `<g class="rsec" data-pid="${id}" style="--c:${avatarColor(nm)}">${path}
+        <text transform="rotate(${mid.toFixed(2)}) translate(0 -58) rotate(-90)" text-anchor="middle" dominant-baseline="middle">${esc(label)}</text></g>`;
+    }).join('') + '<circle class="rrim" r="97"/>';
+  }
+
+  // угол колеса, при котором стрелка сверху смотрит в сектор игрока
+  function wheelAngleFor(g, id) {
+    const a = 360 / g.order.length;
+    const i = g.order.indexOf(id);
+    return -((i + 0.5 + (g.jitter || 0)) * a);
+  }
+
+  function spinTicks(ms) {
+    if (!soundOn) return;
+    // щелчки замедляются вместе с колесом
+    let t = 0; let gap = 0.05;
+    while (t < ms / 1000 - 0.3) { beep(1300, 0.025, 'square', 0.025, t); t += gap; gap *= 1.07; }
+  }
+
+  function renderRoulette() {
+    const g = S.game;
+    const me = S.me;
+    if (!app.querySelector('.table.roulette')) buildRoulette();
+    const wheel = $('#rWheel');
+    const r = g.round;
+
+    // колесо: перестраиваем при смене состава
+    const orderKey = g.order.map((id) => id + nameOf(id)).join('|');
+    if (orderKey !== W.orderKey) { W.orderKey = orderKey; drawWheel(g.order); }
+
+    // прокрутка: новая — крутим с разгоном и долгим торможением, иначе просто держим колесо на выпавшем
+    if (W.seq === null || g.spinSeq !== W.seq) {
+      const fresh = W.seq !== null && r && !REDUCED;
+      W.seq = g.spinSeq;
+      if (r) {
+        const want = wheelAngleFor(g, r.target);
+        if (fresh) {
+          const from = W.rot;
+          let to = want;
+          while (to < from + 360 * (g.turns || 5)) to += 360;
+          W.rot = to;
+          wheel.getAnimations().forEach((x) => x.cancel());
+          wheel.style.transform = `rotate(${to}deg)`;
+          wheel.animate([{ transform: `rotate(${from}deg)`, offset: 0 }, { transform: `rotate(${to}deg)` }], { duration: SPIN_MS, easing: 'cubic-bezier(.15,.55,.08,1)' });
+          W.spinUntil = Date.now() + SPIN_MS;
+          spinTicks(SPIN_MS);
+          clearTimeout(W.timer);
+          W.timer = setTimeout(() => { if (S && S.gameId === 'roulette' && S.game) { W.panelKey = ''; renderRoulette(); } }, SPIN_MS + 50);
+        } else { W.rot = want; wheel.style.transform = `rotate(${want}deg)`; }
+      }
+    } else if (r && Date.now() >= W.spinUntil) {
+      // состав поменялся — колесо встаёт на выпавшего без анимации
+      const want = wheelAngleFor(g, r.target);
+      const norm = (x) => ((x % 360) + 360) % 360;
+      if (Math.abs(norm(want) - norm(W.rot)) > 0.5) { W.rot += norm(want) - norm(W.rot); wheel.style.transform = `rotate(${W.rot}deg)`; }
+    }
+    const spinning = Date.now() < W.spinUntil;
+    wheel.querySelectorAll('.rsec').forEach((s) => {
+      s.classList.toggle('win', !spinning && !!r && s.dataset.pid === r.target);
+      s.classList.toggle('me', s.dataset.pid === me);
+    });
+    $('#rWheelWrap').classList.toggle('can', !!g.canSpin && !spinning);
+
+    // строка состояния
+    const who = (id) => (id === me ? 'вы' : nameOf(id));
+    let status;
+    if (g.over) status = 'Игра окончена';
+    else if (spinning) status = 'Крутится…';
+    else if (g.phase === 'spin') status = g.spinnerMode === 'anyone' ? 'Крутить может любой' : g.spinner === me ? 'Ваша очередь крутить!' : `Крутит: ${nameOf(g.spinner)}`;
+    else status = r.target === me ? 'Выпало вам!' : `Выпало: ${nameOf(r.target)}`;
+    setText($('#rStatus'), status);
+    $('#rStatus').classList.toggle('hot', !g.over && !spinning && (g.canSpin || (r && r.target === me && g.phase !== 'spin')));
+
+    // панель действий: пересобираем только при изменении, чтобы не стирать набираемое задание
+    const panelKey = JSON.stringify([g.phase, r, g.canSpin, g.spinner, g.isHost, spinning, S.host, g.order.length]);
+    if (panelKey !== W.panelKey) {
+      W.panelKey = panelKey;
+      const focused = document.activeElement && document.activeElement.id === 'rTask';
+      let html = '';
+      if (g.over) {
+        html = `<div class="rtitle">Итоги</div>
+          <div class="actions">${S.host === me ? '<button class="btn" id="again">В лобби</button>' : '<span class="rwait">Ждём создателя…</span>'}</div>`;
+      } else if (spinning) html = '<div class="rwait">🎡 Колесо крутится…</div>';
+      else if (g.phase === 'spin') {
+        html = g.canSpin ? '<button class="btn rbig" id="rSpin">🎡 Крутить рулетку</button>'
+          : `<div class="rwait">Ждём, пока ${esc(nameOf(g.spinner))} крутит рулетку</div>`;
+      } else if (g.phase === 'choose') {
+        html = r.target === me
+          ? `<div class="rtitle">Правда или действие?</div>
+             <div class="actions"><button class="btn rtruth" data-kind="truth">🤫 Правда</button><button class="btn rdare" data-kind="dare">🔥 Действие</button></div>`
+          : `<div class="rwait">${esc(nameOf(r.target))} выбирает: правда или действие</div>`;
+      } else if (g.phase === 'task') {
+        // задание придумывают сами игроки: писать может любой, кроме того, кому оно; в силе то, что отправили первым
+        html = r.target !== me
+          ? `<div class="rtitle">${r.kind === 'truth' ? 'Вопрос' : 'Задание'} для ${esc(nameOf(r.target))} · <span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span></div>
+             <textarea id="rTask" maxlength="200" rows="2" placeholder="${r.kind === 'truth' ? 'Ваш вопрос…' : 'Что нужно сделать…'}">${esc(W.draft)}</textarea>
+             <div class="actions"><button class="btn" id="rGive">Задать</button></div>
+             <div class="rhint">Договоритесь вместе — засчитается то, что отправят первым</div>`
+          : `<div class="rwait">Игроки придумывают вам ${r.kind === 'truth' ? 'вопрос' : 'задание'}… · <span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span></div>`;
+      } else if (g.phase === 'doing') {
+        const canDone = r.target === me || r.by === me || r.from === me || g.isHost;
+        html = `<div class="rtask"><span class="rkind ${r.kind}">${KIND_RU[r.kind]}</span>
+            <div class="rfor">${r.target === me ? 'Вам' : esc(nameOf(r.target))}${r.fromDeck ? ' · предлагает сайт' : ` · от ${esc(who(r.from))}`}</div>
+            <div class="rtext">${esc(r.task)}</div></div>
+          <div class="actions">${canDone ? `<button class="btn" id="rDone">✅ ${r.target === me ? 'Выполнено' : 'Засчитать'}</button>` : ''}${r.target === me ? '<button class="btn ghost" id="rRefuse">🙅 Отказываюсь</button>' : ''}${r.fromDeck && r.target !== me ? '<button class="btn ghost" id="rReroll">🎲 Другое</button>' : ''}</div>`;
+      }
+      $('#rPanel').innerHTML = html;
+      const ta = $('#rTask');
+      if (ta && focused) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
+
+    // счёт и последние круги
+    const rows = [...g.order, ...Object.keys(g.stats).filter((id) => !g.order.includes(id) && S.players.some((p) => p.id === id))]
+      .map((id) => ({ id, ...(g.stats[id] || { done: 0, refused: 0 }) }));
+    if (g.over) rows.sort((x, y) => y.done - x.done || x.refused - y.refused);
+    $('#rScore').innerHTML = rows.map((x, i) => `<div class="rrow ${x.id === me ? 'me' : ''}">
+        <span class="rav" style="background:${avatarColor(nameOf(x.id))}">${esc(nameOf(x.id).slice(0, 1).toUpperCase())}</span>
+        <span class="rname">${g.over && i < 3 && x.done ? MEDAL[i] + ' ' : ''}${esc(nameOf(x.id))}${x.id === me ? ' (вы)' : ''}</span>
+        <span class="rpts" title="выполнено">✅ ${x.done}</span><span class="rpts" title="отказы">🙅 ${x.refused}</span></div>`).join('');
+    const RES = { done: '✅', refuse: '🙅', skip: '⏭' };
+    $('#rLog').innerHTML = g.history.slice().reverse().map((h) => `<div><b>${esc(nameOf(h.target))}</b> · ${h.kind ? KIND_RU[h.kind] : '—'}${h.task ? `: ${esc(h.task)}` : ''} ${RES[h.result] || ''}</div>`).join('');
+
+    // кнопки создателя
+    const hostKey = JSON.stringify([g.isHost, g.over, g.phase, g.spinnerMode]);
+    if ($('#rHost').dataset.k !== hostKey) {
+      $('#rHost').dataset.k = hostKey;
+      const canSkip = g.phase !== 'spin' || (g.spinnerMode !== 'anyone' && g.spinnerMode !== 'host');
+      $('#rHost').innerHTML = g.isHost && !g.over
+        ? `${canSkip ? `<button class="btn ghost small" id="rSkip">⏭ ${g.phase === 'spin' ? 'Передать ход' : 'Пропустить круг'}</button>` : ''}<button class="btn ghost small" id="rFinish">🏁 Закончить</button>`
+        : '';
+    }
   }
 
   // ---------- УНО: постоянное дерево DOM и плавные перелёты (как в дураке) ----------

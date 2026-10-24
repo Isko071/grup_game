@@ -1,7 +1,7 @@
 {
   "name": "kartochny-krug",
   "version": "0.1.0",
-  "description": "Карточный круг — сайт для игр с друзьями (уно, дурак, мафия)",
+  "description": "Карточный круг — сайт для игр с друзьями (уно, дурак, мафия, задания)",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",

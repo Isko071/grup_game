@@ -4,6 +4,7 @@ const games = {
   uno: require('./uno'),
   durak: require('./durak'),
   mafia: require('./mafia'),
+  roulette: require('./roulette'),
 };
 
 module.exports = {

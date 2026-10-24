@@ -91,10 +91,13 @@ io.on('connection', (socket) => {
       ack({ ok: true, code: r.code, token: known.token });
       return r.broadcast();
     }
-    if (r.phase !== 'lobby') return ack({ error: 'Игра уже идёт' });
     const g = registry.games[r.gameId];
+    // в некоторые игры (рулетка) можно зайти и посреди партии
+    const midGame = r.phase === 'playing' && g.meta.joinAnytime && g.addPlayer;
+    if (r.phase !== 'lobby' && !midGame) return ack({ error: 'Игра уже идёт' });
     if (r.players.length >= g.meta.maxPlayers) return ack({ error: 'Комната заполнена' });
     const pl = r.addHuman(p.name, socket.id);
+    if (midGame) { g.addPlayer(r.game, pl.id); r.game.names[pl.id] = pl.name; }
     attach(r, pl);
     r.pushChat(null, `${pl.name} зашёл в комнату`);
     ack({ ok: true, code: r.code, token: pl.token });
