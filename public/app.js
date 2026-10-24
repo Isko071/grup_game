@@ -322,7 +322,7 @@
     app.innerHTML = `
       <div class="hero card-box">
         <h1>♠ Карточный круг</h1>
-        <p>Уно, дурак, мафия и рулетка с друзьями. Без регистрации — ник и код комнаты.</p>
+        <p>Уно, дурак, мафия и «Задания» с друзьями. Без регистрации — ник и код комнаты.</p>
         <div class="field"><label for="nameIn">Ваш ник</label>
           <input id="nameIn" maxlength="16" placeholder="Как вас зовут?" value="${esc(store.get('name') || '')}" autocomplete="nickname"></div>
         ${code ? `<button class="btn" id="joinUrl">Войти в комнату ${esc(code)}</button>
