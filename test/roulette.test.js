@@ -83,14 +83,13 @@ test('колесо может остановиться на самом крут�
     act(st, st.round.target, { type: 'choose', kind: 'dare' });
     act(st, st.round.target, { type: 'refuse' });
   }
-  // при равных шансах было бы 20%; вес крутящего 0,35 даёт около 8–10%
-  assert.ok(self > 0, 'выпасть себе можно');
-  assert.ok(self / N < 0.14, `себе выпадает слишком часто: ${self / N}`);
+  // при равных шансах было бы 20%; вес крутящего 2/3 даёт около 14%
+  assert.ok(self / N > 0.11 && self / N < 0.18, `себе выпадает: ${self / N}`);
   // в игре вдвоём колесо тоже иногда останавливается на крутящем
   const two = roulette.create(P(2), { tasks: 'deck' }, Math.random, ctx);
   let s2 = 0;
   for (let i = 0; i < 2000; i++) { const by = two.spinner; act(two, by, { type: 'spin' }); if (two.round.target === by) s2++; act(two, 'p0', { type: 'skip' }); }
-  assert.ok(s2 > 200 && s2 < 1000, `вдвоём себе: ${s2 / 2000}`);
+  assert.ok(s2 > 700 && s2 < 900, `вдвоём себе должно быть около 40%: ${s2 / 2000}`);
 });
 
 test('задание придумывает любой игрок, кроме того, на кого выпало', () => {

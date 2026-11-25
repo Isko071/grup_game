@@ -48,9 +48,10 @@ function create(players, rules = {}, rnd = Math.random, ctx = {}) {
 
 const canSpin = (st, pid) => !st.over && st.phase === 'spin' && pid === st.spinner;
 
-// Вес игрока на колесе: обычный — 1; сам крутящий (на него только что выпало) — 0,35.
-// Выпасть себе снова можно, но реже, поэтому одному и тому же почти не выпадает 3–4 раза подряд
-const SELF_WEIGHT = 0.35;
+// Вес игрока на колесе: обычный — 1; сам крутящий (на него только что выпало) — 2/3.
+// Выпасть себе снова можно, но реже: вдвоём это 40%, при 10 игроках — около 7%.
+// Так одному и тому же редко выпадает 3–4 раза подряд
+const SELF_WEIGHT = 2 / 3;
 const weights = (st, spinner) => st.order.map((id) => (id === spinner ? SELF_WEIGHT : 1));
 function pickTarget(st, spinner) {
   const w = weights(st, spinner);
