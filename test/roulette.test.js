@@ -6,6 +6,15 @@ const roulette = require('../server/games/roulette');
 const P = (n) => Array.from({ length: n }, (_, i) => ({ id: 'p' + i, bot: false }));
 const ctx = { host: 'p0', hostId: 'p0' };
 const act = (st, pid, a) => roulette.act(st, pid, a, ctx);
+// крутим, пока колесо не остановится на другом игроке (на себя тоже может выпасть, но реже)
+function spinOther(st) {
+  const by = st.spinner;
+  for (;;) {
+    act(st, by, { type: 'spin' });
+    if (st.round.target !== by) return by;
+    act(st, 'p0', { type: 'skip' }); // создатель пропускает круг — крутит тот же игрок
+  }
+}
 
 test('полный круг: крутит → выпал другой → правда/действие → задание → выполнено', () => {
   const st = roulette.create(P(4), {}, Math.random, ctx);
@@ -13,9 +22,8 @@ test('полный круг: крутит → выпал другой → пра
   assert.ok(st.order.includes(by));
   const other = st.order.find((id) => id !== by);
   assert.ok(act(st, other, { type: 'spin' }).error, 'крутит только тот, чья очередь');
-  assert.ok(!act(st, by, { type: 'spin' }).error);
+  spinOther(st);
   const target = st.round.target;
-  assert.notStrictEqual(target, by, 'рулетка не выпадает на того, кто крутил');
   assert.strictEqual(st.phase, 'choose');
   assert.ok(act(st, by, { type: 'choose', kind: 'truth' }).error, 'выбирает только тот, на кого выпало');
   assert.ok(!act(st, target, { type: 'choose', kind: 'dare' }).error);
@@ -28,8 +36,8 @@ test('полный круг: крутит → выпал другой → пра
   assert.ok(!act(st, target, { type: 'done' }).error);
   assert.strictEqual(st.stats[target].done, 1);
   assert.strictEqual(st.phase, 'spin');
-  assert.strictEqual(st.spinner, target, 'по умолчанию крутит тот, на кого выпало');
-  assert.strictEqual(st.history.length, 1);
+  assert.strictEqual(st.spinner, target, 'крутит тот, на кого выпало');
+  assert.strictEqual(st.history[st.history.length - 1].result, 'done');
 });
 
 test('случайные задания: задание из колоды выдаётся сразу после выбора', () => {
@@ -52,42 +60,42 @@ test('колода не повторяется, пока не кончится',
   assert.strictEqual(seen.size, roulette.TASKS.dare.length);
 });
 
-test('режимы: по кругу, любой, только создатель', () => {
-  const round = roulette.create(P(4), { spinner: 'round' }, Math.random, ctx);
-  const first = round.spinner;
-  act(round, first, { type: 'spin' });
-  act(round, round.round.target, { type: 'choose', kind: 'truth' });
-  act(round, first, { type: 'task', random: true });
-  act(round, round.round.target, { type: 'done' });
-  assert.strictEqual(round.spinner, round.order[(round.order.indexOf(first) + 1) % 4]);
-
-  const any = roulette.create(P(3), { spinner: 'anyone' }, Math.random, ctx);
-  assert.ok(!act(any, 'p2', { type: 'spin' }).error);
-
-  const host = roulette.create(P(3), { spinner: 'host' }, Math.random, ctx);
-  assert.ok(act(host, 'p1', { type: 'spin' }).error);
-  assert.ok(!act(host, 'p0', { type: 'spin' }).error);
-  assert.strictEqual(roulette.view(host, 'p0', ctx).spinner, 'p0');
+test('крутит всегда тот, на кого выпало; в лобби нет настройки «кто крутит»', () => {
+  assert.ok(!roulette.meta.rulesSchema.some((r) => r.key === 'spinner'));
+  const st = roulette.create(P(4), {}, Math.random, ctx);
+  for (let i = 0; i < 20; i++) {
+    act(st, st.spinner, { type: 'spin' });
+    const t = st.round.target;
+    act(st, t, { type: 'choose', kind: 'truth' });
+    act(st, st.order.find((id) => id !== t), { type: 'task', text: 'вопрос' });
+    act(st, t, { type: 'done' });
+    assert.strictEqual(st.spinner, t);
+  }
 });
 
-test('одному и тому же можно выпасть дважды подряд, но реже', () => {
-  const st = roulette.create(P(5), { spinner: 'anyone', tasks: 'deck' }, Math.random, ctx);
-  let last = null; let repeats = 0; const N = 4000;
+test('колесо может остановиться на самом крутящем, но реже остальных', () => {
+  const st = roulette.create(P(5), { tasks: 'deck' }, Math.random, ctx);
+  const N = 6000; let self = 0;
   for (let i = 0; i < N; i++) {
-    act(st, 'p0', { type: 'spin' });
-    if (st.round.target === last) repeats++;
-    last = st.round.target;
-    act(st, 'p0', { type: 'skip' });
+    const by = st.spinner;
+    act(st, by, { type: 'spin' });
+    if (st.round.target === by) self++;
+    act(st, st.round.target, { type: 'choose', kind: 'dare' });
+    act(st, st.round.target, { type: 'refuse' });
   }
-  // без поправки повтор был бы примерно в 1/4 случаев (4 кандидата); с поправкой — заметно реже, но бывает
-  assert.ok(repeats > 0, 'повтор возможен');
-  assert.ok(repeats / N < 0.15, `повторов слишком много: ${repeats / N}`);
+  // при равных шансах было бы 20%; вес крутящего 0,35 даёт около 8–10%
+  assert.ok(self > 0, 'выпасть себе можно');
+  assert.ok(self / N < 0.14, `себе выпадает слишком часто: ${self / N}`);
+  // в игре вдвоём колесо тоже иногда останавливается на крутящем
+  const two = roulette.create(P(2), { tasks: 'deck' }, Math.random, ctx);
+  let s2 = 0;
+  for (let i = 0; i < 2000; i++) { const by = two.spinner; act(two, by, { type: 'spin' }); if (two.round.target === by) s2++; act(two, 'p0', { type: 'skip' }); }
+  assert.ok(s2 > 200 && s2 < 1000, `вдвоём себе: ${s2 / 2000}`);
 });
 
 test('задание придумывает любой игрок, кроме того, на кого выпало', () => {
   const st = roulette.create(P(4), {}, Math.random, ctx);
-  const by = st.spinner;
-  act(st, by, { type: 'spin' });
+  const by = spinOther(st);
   const target = st.round.target;
   act(st, target, { type: 'choose', kind: 'truth' });
   assert.ok(act(st, target, { type: 'task', text: 'сам себе' }).error);
@@ -128,8 +136,7 @@ test('создатель заканчивает игру', () => {
 
 test('«Предлагает сайт»: другие игроки могут попросить другое задание, сам игрок — нет', () => {
   const st = roulette.create(P(3), { tasks: 'deck' }, Math.random, ctx);
-  const by = st.spinner;
-  act(st, by, { type: 'spin' });
+  const by = spinOther(st);
   const target = st.round.target;
   act(st, target, { type: 'choose', kind: 'dare' });
   const first = st.round.task;
