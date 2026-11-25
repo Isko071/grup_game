@@ -36,7 +36,6 @@ function create(players, rules = {}, rnd = Math.random, ctx = {}) {
     spinSeq: 0, // номер прокрутки — клиент по нему запускает анимацию
     turns: 5, // сколько полных оборотов в анимации
     jitter: 0, // где именно внутри сектора игрока остановится стрелка (−0.35…0.35 от ширины сектора)
-    recent: [], // на кого выпадало недавно (последний — в конце)
     stats: Object.fromEntries(order.map((id) => [id, { done: 0, refused: 0 }])),
     used: { truth: [], dare: [] },
     history: [],
@@ -49,14 +48,10 @@ function create(players, rules = {}, rnd = Math.random, ctx = {}) {
 
 const canSpin = (st, pid) => !st.over && st.phase === 'spin' && pid === st.spinner;
 
-// Вес игрока на колесе: обычный — 1; сам крутящий (на него только что выпало) — 0,35,
-// то есть выпасть себе снова можно, но реже; тот, на кого выпало кругом раньше, — 0,6
+// Вес игрока на колесе: обычный — 1; сам крутящий (на него только что выпало) — 0,35.
+// Выпасть себе снова можно, но реже, поэтому одному и тому же почти не выпадает 3–4 раза подряд
 const SELF_WEIGHT = 0.35;
-const PREV_WEIGHT = 0.6;
-function weights(st, spinner) {
-  const prev = st.recent[st.recent.length - 2];
-  return st.order.map((id) => (id === spinner ? SELF_WEIGHT : id === prev ? PREV_WEIGHT : 1));
-}
+const weights = (st, spinner) => st.order.map((id) => (id === spinner ? SELF_WEIGHT : 1));
 function pickTarget(st, spinner) {
   const w = weights(st, spinner);
   let x = st.rnd() * w.reduce((a, b) => a + b, 0);
@@ -101,8 +96,6 @@ function act(st, pid, a, ctx = {}) {
       if (st.order.length < 2) return { error: 'Не с кем играть' };
       const target = pickTarget(st, pid);
       st.round = { by: pid, target, kind: null, task: null, fromDeck: false, from: null };
-      st.recent.push(target);
-      if (st.recent.length > 2) st.recent.shift();
       st.spinSeq++;
       st.turns = 4 + Math.floor(st.rnd() * 3);
       st.jitter = Math.round((st.rnd() * 0.7 - 0.35) * 100) / 100;
