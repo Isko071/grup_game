@@ -1036,8 +1036,8 @@
     let status;
     if (g.over) status = 'Игра окончена';
     else if (spinning) status = 'Крутится…';
-    else if (g.phase === 'spin') status = g.spinnerMode === 'anyone' ? 'Крутить может любой' : g.spinner === me ? 'Ваша очередь крутить!' : `Крутит: ${nameOf(g.spinner)}`;
-    else status = r.target === me ? 'Выпало вам!' : `Выпало: ${nameOf(r.target)}`;
+    else if (g.phase === 'spin') status = g.spinner === me ? 'Ваша очередь крутить!' : `Крутит: ${nameOf(g.spinner)}`;
+    else status = r.target === r.by ? (r.target === me ? 'Выпало вам ещё раз!' : `Снова ${nameOf(r.target)}!`) : r.target === me ? 'Выпало вам!' : `Выпало: ${nameOf(r.target)}`;
     setText($('#rStatus'), status);
     $('#rStatus').classList.toggle('hot', !g.over && !spinning && (g.canSpin || (r && r.target === me && g.phase !== 'spin')));
 
@@ -1091,12 +1091,11 @@
     $('#rLog').innerHTML = g.history.slice().reverse().map((h) => `<div><b>${esc(nameOf(h.target))}</b> · ${h.kind ? KIND_RU[h.kind] : '—'}${h.task ? `: ${esc(h.task)}` : ''} ${RES[h.result] || ''}</div>`).join('');
 
     // кнопки создателя
-    const hostKey = JSON.stringify([g.isHost, g.over, g.phase, g.spinnerMode]);
+    const hostKey = JSON.stringify([g.isHost, g.over, g.phase]);
     if ($('#rHost').dataset.k !== hostKey) {
       $('#rHost').dataset.k = hostKey;
-      const canSkip = g.phase !== 'spin' || (g.spinnerMode !== 'anyone' && g.spinnerMode !== 'host');
       $('#rHost').innerHTML = g.isHost && !g.over
-        ? `${canSkip ? `<button class="btn ghost small" id="rSkip">⏭ ${g.phase === 'spin' ? 'Передать ход' : 'Пропустить круг'}</button>` : ''}<button class="btn ghost small" id="rFinish">🏁 Закончить</button>`
+        ? `<button class="btn ghost small" id="rSkip">⏭ ${g.phase === 'spin' ? 'Передать ход' : 'Пропустить круг'}</button><button class="btn ghost small" id="rFinish">🏁 Закончить</button>`
         : '';
     }
   }

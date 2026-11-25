@@ -1,8 +1,8 @@
 'use strict';
 // ЗАДАНИЯ — «правда или действие» с рулеткой имён.
 // Круг: кто-то крутит рулетку с именами → она останавливается на случайном игроке → он выбирает «правда» или «действие» →
-// тот, кто крутил, придумывает задание (или берёт случайное из колоды) → игрок выполняет или отказывается.
-// Кто крутит следующим — настраивается в лобби. Состояние меняется на месте; игрокам уходит только view().
+// задание придумывают игроки (или предлагает сайт) → игрок выполняет или отказывается → крутит тот, на кого выпало.
+// Колесо может остановиться и на самом крутящем, но с меньшим шансом. Состояние меняется на месте; игрокам уходит только view().
 
 const TASKS = require('./roulette-tasks');
 
@@ -13,17 +13,8 @@ const meta = {
   maxPlayers: 15,
   supportsBots: false,
   joinAnytime: true, // можно зайти по ссылке посреди игры
-  defaultRules: { spinner: 'target', tasks: 'player' },
+  defaultRules: { tasks: 'player' },
   rulesSchema: [
-    {
-      key: 'spinner', label: 'Кто крутит', type: 'select',
-      choices: [
-        { value: 'target', label: 'На кого выпало' },
-        { value: 'round', label: 'По кругу' },
-        { value: 'anyone', label: 'Любой' },
-        { value: 'host', label: 'Создатель' },
-      ],
-    },
     {
       key: 'tasks', label: 'Кто придумывает', type: 'select',
       choices: [{ value: 'player', label: 'Решают игроки' }, { value: 'deck', label: 'Предлагает сайт' }],
@@ -40,57 +31,32 @@ function create(players, rules = {}, rnd = Math.random, ctx = {}) {
     rules: r,
     order,
     phase: 'spin', // spin → choose → task → doing → spin …
-    spinner: null, // кто крутит сейчас (null — любой)
+    spinner: null, // кто крутит сейчас: тот, на кого выпало в прошлом круге
     round: null, // { by, target, kind, task, fromDeck }
     spinSeq: 0, // номер прокрутки — клиент по нему запускает анимацию
     turns: 5, // сколько полных оборотов в анимации
     jitter: 0, // где именно внутри сектора игрока остановится стрелка (−0.35…0.35 от ширины сектора)
-    recent: [], // на кого выпадало недавно (последний — в конце)
     stats: Object.fromEntries(order.map((id) => [id, { done: 0, refused: 0 }])),
     used: { truth: [], dare: [] },
     history: [],
     over: false,
     rnd,
   };
-  st.spinner = firstSpinner(st, ctx.hostId || ctx.host);
+  st.spinner = order[Math.floor(rnd() * order.length)]; // первым крутит случайный игрок
   return st;
 }
 
-function firstSpinner(st, host) {
-  const m = st.rules.spinner;
-  if (m === 'anyone') return null;
-  if (m === 'host') return host || st.order[0];
-  return st.order[Math.floor(st.rnd() * st.order.length)];
-}
+const canSpin = (st, pid) => !st.over && st.phase === 'spin' && pid === st.spinner;
 
-// кто крутит в следующем круге
-function nextSpinner(st, host) {
-  const m = st.rules.spinner;
-  const r = st.round;
-  if (m === 'anyone') return null;
-  if (m === 'host') return host;
-  if (m === 'target' && r && st.order.includes(r.target)) return r.target;
-  // по кругу: следующий за тем, кто крутил
-  const prev = r ? r.by : st.spinner;
-  const i = st.order.indexOf(prev);
-  if (i < 0) return st.order[0];
-  return st.order[(i + 1) % st.order.length];
-}
-
-function canSpin(st, pid, host) {
-  if (st.over || st.phase !== 'spin' || !st.order.includes(pid)) return false;
-  if (st.rules.spinner === 'anyone') return true;
-  if (st.rules.spinner === 'host') return pid === host;
-  return pid === st.spinner;
-}
-
-// Случайный игрок; кому недавно выпадало, тому шанс меньше (но выпасть снова можно):
-// последнему — 35% от обычного, предпоследнему — 60%
-function pickTarget(st, others) {
-  const w = others.map((id) => (id === st.recent[st.recent.length - 1] ? 0.35 : id === st.recent[st.recent.length - 2] ? 0.6 : 1));
+// Вес игрока на колесе: обычный — 1; сам крутящий (на него только что выпало) — 0,35.
+// Выпасть себе снова можно, но реже, поэтому одному и тому же почти не выпадает 3–4 раза подряд
+const SELF_WEIGHT = 0.35;
+const weights = (st, spinner) => st.order.map((id) => (id === spinner ? SELF_WEIGHT : 1));
+function pickTarget(st, spinner) {
+  const w = weights(st, spinner);
   let x = st.rnd() * w.reduce((a, b) => a + b, 0);
-  for (let i = 0; i < others.length; i++) { x -= w[i]; if (x < 0) return others[i]; }
-  return others[others.length - 1];
+  for (let i = 0; i < st.order.length; i++) { x -= w[i]; if (x < 0) return st.order[i]; }
+  return st.order[st.order.length - 1];
 }
 
 function drawTask(st, kind) {
@@ -102,20 +68,22 @@ function drawTask(st, kind) {
   return list[i];
 }
 
-function newRound(st, host) {
-  st.spinner = nextSpinner(st, host);
+function newRound(st) {
+  const r = st.round;
+  if (r && st.order.includes(r.target)) st.spinner = r.target; // крутит тот, на кого выпало
+  if (!st.order.includes(st.spinner)) st.spinner = st.order[0] || null;
   st.round = null;
   st.phase = 'spin';
 }
 
-function finishRound(st, result, host) {
+function finishRound(st, result) {
   const r = st.round;
   if (r && st.stats[r.target]) st.stats[r.target][result === 'done' ? 'done' : 'refused']++;
   if (r) {
     st.history.push({ by: r.by, target: r.target, kind: r.kind, task: r.task, result });
     if (st.history.length > HISTORY) st.history.shift();
   }
-  newRound(st, host);
+  newRound(st);
 }
 
 function act(st, pid, a, ctx = {}) {
@@ -124,13 +92,10 @@ function act(st, pid, a, ctx = {}) {
   const r = st.round;
   switch (a.type) {
     case 'spin': {
-      if (!canSpin(st, pid, host)) return { error: 'Сейчас крутите не вы' };
-      const others = st.order.filter((id) => id !== pid);
-      if (!others.length) return { error: 'Не с кем играть' };
-      const target = pickTarget(st, others);
+      if (!canSpin(st, pid)) return { error: 'Сейчас крутите не вы' };
+      if (st.order.length < 2) return { error: 'Не с кем играть' };
+      const target = pickTarget(st, pid);
       st.round = { by: pid, target, kind: null, task: null, fromDeck: false, from: null };
-      st.recent.push(target);
-      if (st.recent.length > 2) st.recent.shift();
       st.spinSeq++;
       st.turns = 4 + Math.floor(st.rnd() * 3);
       st.jitter = Math.round((st.rnd() * 0.7 - 0.35) * 100) / 100;
@@ -169,13 +134,12 @@ function act(st, pid, a, ctx = {}) {
       if (st.phase !== 'doing') return { error: 'Сейчас нечего засчитывать' };
       // выполнение засчитывают сам игрок, тот, кто дал задание, или создатель; отказаться может только сам игрок
       if (a.type === 'refuse' ? pid !== r.target : ![r.target, r.by, r.from, host].includes(pid)) return { error: 'Нельзя' };
-      finishRound(st, a.type, host);
+      finishRound(st, a.type);
       return { ok: true, sound: a.type === 'done' ? 'win' : 'penalty' };
     }
     case 'skip': {
       if (pid !== host) return { error: 'Только создатель' };
-      if (st.phase === 'spin') { // крутящий пропал — передаём ход дальше
-        if (st.rules.spinner === 'anyone' || st.rules.spinner === 'host') return { error: 'Крутить может любой' };
+      if (st.phase === 'spin') { // крутящий пропал — передаём ход следующему по кругу
         const i = st.order.indexOf(st.spinner);
         st.spinner = st.order[(i + 1) % st.order.length];
         return { ok: true };
@@ -183,8 +147,11 @@ function act(st, pid, a, ctx = {}) {
       if (r) {
         st.history.push({ by: r.by, target: r.target, kind: r.kind, task: r.task, result: 'skip' });
         if (st.history.length > HISTORY) st.history.shift();
+        // круг сорвался (выпавший не отвечает) — заново крутит тот, кто крутил
+        st.spinner = st.order.includes(r.by) ? r.by : st.order[0];
       }
-      newRound(st, host);
+      st.round = null;
+      st.phase = 'spin';
       return { ok: true };
     }
     case 'finish': {
@@ -200,27 +167,25 @@ function act(st, pid, a, ctx = {}) {
 function view(st, pid, ctx = {}) {
   const host = ctx.host;
   const r = st.round;
-  const spinner = st.rules.spinner === 'host' ? host : st.spinner;
   return {
     phase: st.over ? 'over' : st.phase,
     order: st.order,
-    spinnerMode: st.rules.spinner,
     tasksMode: st.rules.tasks,
-    spinner,
+    spinner: st.spinner,
     round: r ? { ...r } : null,
     spinSeq: st.spinSeq,
     turns: st.turns,
     jitter: st.jitter,
     stats: st.stats,
     history: st.history.slice(-6),
-    canSpin: canSpin(st, pid, host),
+    canSpin: canSpin(st, pid),
     isHost: pid === host,
     over: st.over,
   };
 }
 
 // Игрок вышел: убираем его из круга; если круг был про него — начинаем новый
-function removePlayer(st, pid, ctx = {}) {
+function removePlayer(st, pid) {
   const i = st.order.indexOf(pid);
   if (i < 0) return;
   const r = st.round;
@@ -229,7 +194,7 @@ function removePlayer(st, pid, ctx = {}) {
   st.order.splice(i, 1);
   if (r && r.target === pid) {
     st.round = null; st.phase = 'spin';
-    st.spinner = st.rules.spinner === 'anyone' ? null : (r.target === pid ? (st.order.includes(r.by) ? r.by : st.order[0]) : r.target);
+    st.spinner = st.order.includes(r.by) ? r.by : st.order[0];
   } else if (wasSpinner && st.phase === 'spin') st.spinner = next === pid ? st.order[0] : next;
   if (st.spinner && !st.order.includes(st.spinner)) st.spinner = st.order[0] || null;
   if (st.order.length < 2) st.over = true;
